@@ -96,7 +96,7 @@ fun SettingsScreen(
             OutlinedTextField(
                 value = model, onValueChange = { model = it },
                 label = { Text("模型名") },
-                supportingText = { Text("如 deepseek-chat") },
+                supportingText = { Text("如 deepseek-flash") },
                 modifier = Modifier.fillMaxWidth(), singleLine = true
             )
             Button(

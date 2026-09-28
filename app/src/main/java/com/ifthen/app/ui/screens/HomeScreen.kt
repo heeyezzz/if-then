@@ -65,6 +65,7 @@ fun HomeScreen(
                         stat = state.stats[id] ?: com.ifthen.app.ui.RuleStat(),
                         emphasized = true,
                         onClick = {
+                            com.ifthen.app.ui.SuccessChime.play()
                             vm.logDone(rule.id)
                             onRecord("已记录：${rule.thenText} ✓")
                         },
@@ -83,6 +84,7 @@ fun HomeScreen(
                         rule = rule,
                         stat = state.stats[rule.id] ?: com.ifthen.app.ui.RuleStat(),
                         onClick = {
+                            com.ifthen.app.ui.SuccessChime.play()
                             vm.logDone(rule.id)
                             onRecord("已记录：${rule.thenText} ✓")
                         },

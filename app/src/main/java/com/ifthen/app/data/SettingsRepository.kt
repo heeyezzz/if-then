@@ -20,7 +20,9 @@ class SettingsRepository(private val context: Context) {
         ApiSettings(
             baseUrl = prefs[keyBaseUrl] ?: "https://api.deepseek.com/v1",
             apiKey = prefs[keyApiKey] ?: "",
-            model = prefs[keyModel] ?: "deepseek-chat"
+            // 旧默认值 deepseek-chat 已被 DeepSeek 下线，自动迁移
+            model = (prefs[keyModel] ?: "deepseek-flash")
+                .let { if (it == "deepseek-chat") "deepseek-flash" else it }
         )
     }
 
