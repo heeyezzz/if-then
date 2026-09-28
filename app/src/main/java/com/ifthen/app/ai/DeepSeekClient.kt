@@ -24,6 +24,22 @@ class DeepSeekClient {
         .build()
     private val json = Json { ignoreUnknownKeys = true }
 
+    /** 用 GET /models 验证地址与 key，不消耗 token；返回可见模型数 */
+    fun testConnection(settings: ApiSettings): Int {
+        require(settings.apiKey.isNotBlank()) { "API Key 为空" }
+        val request = Request.Builder()
+            .url(settings.baseUrl.trimEnd('/') + "/models")
+            .header("Authorization", "Bearer ${settings.apiKey}")
+            .get()
+            .build()
+        http.newCall(request).execute().use { resp ->
+            val text = resp.body?.string() ?: error("空响应")
+            if (!resp.isSuccessful) error("HTTP ${resp.code}: ${text.take(150)}")
+            return json.parseToJsonElement(text).jsonObject
+                .getValue("data").jsonArray.size
+        }
+    }
+
     /** 困扰描述 -> 3~5 条候选预案；只返回候选，由用户确认后入库 */
     fun generateCandidates(settings: ApiSettings, concern: String): List<AiCandidate> {
         require(settings.apiKey.isNotBlank()) { "请先在设置页填写 API Key" }

@@ -193,6 +193,13 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
+    fun testApi(s: ApiSettings, onResult: (Result<Int>) -> Unit) {
+        viewModelScope.launch(Dispatchers.IO) {
+            val r = runCatching { aiClient.testConnection(s) }
+            kotlinx.coroutines.withContext(Dispatchers.Main) { onResult(r) }
+        }
+    }
+
     fun generateCandidates(concern: String, onResult: (Result<List<AiCandidate>>) -> Unit) {
         viewModelScope.launch(Dispatchers.IO) {
             val settings = apiSettings.value

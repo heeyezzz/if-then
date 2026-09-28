@@ -9,6 +9,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.AlertDialog
@@ -44,6 +45,7 @@ fun SettingsScreen(
     var initialized by rememberSaveable { mutableStateOf(false) }
     var confirmImport by rememberSaveable { mutableStateOf(false) }
     var pendingImportUri by remember { mutableStateOf<android.net.Uri?>(null) }
+    var testing by remember { mutableStateOf(false) }
 
     LaunchedEffect(settings, initialized) {
         if (!initialized && settings.baseUrl.isNotBlank()) {
@@ -108,6 +110,29 @@ fun SettingsScreen(
                 },
                 modifier = Modifier.fillMaxWidth()
             ) { Text("保存接口配置") }
+            OutlinedButton(
+                enabled = !testing,
+                onClick = {
+                    testing = true
+                    vm.testApi(
+                        com.ifthen.app.data.ApiSettings(baseUrl.trim(), apiKey.trim(), model.trim())
+                    ) { r ->
+                        testing = false
+                        r.onSuccess { onToast("连接成功，可见 $it 个模型") }
+                            .onFailure { onToast("连接失败：${it.message}") }
+                    }
+                },
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                if (testing) {
+                    androidx.compose.material3.CircularProgressIndicator(
+                        modifier = Modifier.size(18.dp), strokeWidth = 2.dp
+                    )
+                    Text("  测试连接中…")
+                } else {
+                    Text("测试连接")
+                }
+            }
 
             Spacer(Modifier.height(12.dp))
             Text("数据", style = MaterialTheme.typography.titleMedium)
