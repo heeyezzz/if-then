@@ -1,11 +1,23 @@
 package com.ifthen.app.ui.components
 
+import androidx.compose.animation.AnimatedContent
+import androidx.compose.animation.core.Animatable
+import androidx.compose.animation.core.Spring
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.spring
+import androidx.compose.animation.core.tween
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.slideInVertically
+import androidx.compose.animation.slideOutVertically
+import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
+import androidx.compose.foundation.gestures.detectHorizontalDragGestures
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -14,6 +26,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -22,8 +35,10 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
 import androidx.compose.material.icons.automirrored.filled.TrendingUp
+import androidx.compose.material.icons.filled.Archive
+import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.DeleteOutline
 import androidx.compose.material.icons.filled.DragIndicator
-import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
@@ -33,22 +48,36 @@ import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.scale
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import com.ifthen.app.data.Folder
 import com.ifthen.app.data.Rule
 import com.ifthen.app.ui.RuleStat
+import kotlinx.coroutines.launch
+import kotlin.math.abs
+import kotlin.math.roundToInt
 
-val FolderEmojis = listOf("📁", "🌙", "☀️", "️", "🏋️", "📚", "🍔", "🧘", "✈️", "🌱")
+val FolderEmojis = listOf("📁", "🌙", "☀️", "💼", "🏋️", "📚", "🍔", "🧘", "✈️", "🌱")
 val FolderColors = listOf(0xFF1F6E5C, 0xFF2F5DA8, 0xFF6A4FA3, 0xFFB8860B, 0xFF8C4A2F, 0xFF0F7B7B)
+
+val ActionMiss = Color(0xFFE08A2E)
+val ActionArchive = Color(0xFF5B6E8C)
+val ActionDelete = Color(0xFFC0392B)
 
 @Composable
 fun TitleBar(
@@ -73,12 +102,21 @@ fun TitleBar(
                     .padding(horizontal = 10.dp, vertical = 2.dp)
             )
         }
-        Text(
-            text = if (emoji == null) title else "$emoji $title",
-            style = MaterialTheme.typography.headlineMedium,
-            fontWeight = FontWeight.SemiBold,
+        AnimatedContent(
+            targetState = if (emoji == null) title else "$emoji $title",
+            transitionSpec = {
+                (fadeIn(tween(220)) + slideInVertically(tween(220)) { it / 6 })
+                    .togetherWith(fadeOut(tween(140)) + slideOutVertically(tween(140)) { -it / 6 })
+            },
+            label = "title",
             modifier = Modifier.weight(1f)
-        )
+        ) { text ->
+            Text(
+                text = text,
+                style = MaterialTheme.typography.headlineMedium,
+                fontWeight = FontWeight.SemiBold
+            )
+        }
         action?.invoke()
     }
 }
@@ -103,6 +141,7 @@ fun SectionHeader(
     }
 }
 
+/** 连击数：数字变化时向上滚动切换 */
 @Composable
 fun StreakChip(count: Int, modifier: Modifier = Modifier) {
     if (count <= 0) return
@@ -120,15 +159,24 @@ fun StreakChip(count: Int, modifier: Modifier = Modifier) {
             tint = MaterialTheme.colorScheme.onSecondaryContainer
         )
         Spacer(Modifier.width(3.dp))
-        Text(
-            text = "$count",
-            style = MaterialTheme.typography.labelMedium,
-            color = MaterialTheme.colorScheme.onSecondaryContainer
-        )
+        AnimatedContent(
+            targetState = count,
+            transitionSpec = {
+                (slideInVertically(tween(200)) { it } + fadeIn(tween(200)))
+                    .togetherWith(slideOutVertically(tween(200)) { -it } + fadeOut(tween(200)))
+            },
+            label = "streak"
+        ) { n ->
+            Text(
+                text = "$n",
+                style = MaterialTheme.typography.labelMedium,
+                color = MaterialTheme.colorScheme.onSecondaryContainer
+            )
+        }
     }
 }
 
-/** 高频区用的紧凑药丸：点=做了，长按=没做 */
+/** 高频药丸：点=完成，长按=进编辑页 */
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
 fun RuleChip(
@@ -138,14 +186,33 @@ fun RuleChip(
     onLongClick: () -> Unit,
     modifier: Modifier = Modifier
 ) {
+    var pressed by remember { mutableStateOf(false) }
+    val scale by animateFloatAsState(
+        targetValue = if (pressed) 0.94f else 1f,
+        animationSpec = spring(dampingRatio = Spring.DampingRatioMediumBouncy),
+        label = "chipScale"
+    )
     Row(
         modifier = modifier
+            .scale(scale)
             .clip(RoundedCornerShape(50))
             .background(MaterialTheme.colorScheme.primaryContainer)
-            .combinedClickable(onClick = onClick, onLongClick = onLongClick)
+            .combinedClickable(
+                onClick = {
+                    pressed = true
+                    onClick()
+                },
+                onLongClick = onLongClick
+            )
             .padding(horizontal = 14.dp, vertical = 10.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
+        LaunchedEffect(pressed) {
+            if (pressed) {
+                kotlinx.coroutines.delay(220)
+                pressed = false
+            }
+        }
         Text(
             rule.ifText,
             style = MaterialTheme.typography.labelLarge,
@@ -162,68 +229,183 @@ fun RuleChip(
     }
 }
 
-/** 点=做了；长按=这次没做；把手长按可拖到文件夹 */
+/**
+ * 卡片手势：右滑=完成，左滑=露出动作钮，点=进编辑页，把手长按=拖拽换夹。
+ * 完成不删除卡片（预案是长期的），所以右滑到底后卡片回弹并给出成功反馈。
+ */
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
-fun RuleCard(
+fun SwipeRuleCard(
     rule: Rule,
     stat: RuleStat,
+    revealedId: Long?,
+    onReveal: (Long?) -> Unit,
+    dragging: Boolean = false,
     dragHandleModifier: Modifier = Modifier,
-    onClick: () -> Unit,
-    onLongClick: () -> Unit,
-    onEdit: () -> Unit,
+    onDone: () -> Unit,
+    onMiss: () -> Unit,
+    onArchive: () -> Unit,
+    onDelete: () -> Unit,
+    onOpen: () -> Unit,
+    cardModifier: Modifier = Modifier,
     modifier: Modifier = Modifier
 ) {
-    Card(
-        modifier = modifier.fillMaxWidth(),
-        shape = RoundedCornerShape(14.dp),
-        colors = CardDefaults.cardColors(
-            containerColor = MaterialTheme.colorScheme.surfaceVariant
-        )
-    ) {
+    val scope = rememberCoroutineScope()
+    val density = LocalDensity.current
+    val actionsWidthPx = with(density) { 196.dp.toPx() }
+    val offsetX = remember { Animatable(0f) }
+    var succeeded by remember { mutableStateOf(false) }
+    val cardScale by animateFloatAsState(
+        targetValue = if (succeeded) 1.02f else 1f,
+        animationSpec = spring(dampingRatio = Spring.DampingRatioMediumBouncy),
+        label = "cardPop"
+    )
+    val revealed = revealedId == rule.id
+    val sourceAlpha by animateFloatAsState(
+        targetValue = if (dragging) 0.35f else 1f,
+        animationSpec = tween(150),
+        label = "sourceAlpha"
+    )
+
+    LaunchedEffect(revealed) {
+        if (!revealed && offsetX.value != 0f) {
+            offsetX.animateTo(0f, spring(stiffness = Spring.StiffnessMediumLow))
+        }
+    }
+
+    Box(modifier = modifier.fillMaxWidth()) {
+        // 左滑露出的动作钮（在卡片下层）
         Row(
             modifier = Modifier
-                .combinedClickable(onClick = onClick, onLongClick = onLongClick)
-                .padding(start = 14.dp, end = 4.dp, top = 12.dp, bottom = 12.dp),
-            verticalAlignment = Alignment.CenterVertically
+                .align(Alignment.CenterEnd)
+                .alpha(if (dragging) 0f else 1f)
+                .height(with(density) { 56.dp })
+                .padding(end = 4.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(10.dp)
         ) {
-            Column(Modifier.weight(1f)) {
-                Text(
-                    text = rule.ifText,
-                    style = MaterialTheme.typography.bodyLarge,
-                    color = MaterialTheme.colorScheme.onSurface
-                )
-                Spacer(Modifier.height(2.dp))
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Text(
-                        text = "→ ${rule.thenText}",
-                        style = MaterialTheme.typography.bodyMedium,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        modifier = Modifier.weight(1f, fill = false)
-                    )
-                    StreakChip(stat.streak)
-                }
+            RoundAction("没做", ActionMiss, Icons.Filled.Close) {
+                onMiss(); scope.launch { offsetX.animateTo(0f, spring()) }; onReveal(null)
             }
-            Icon(
-                imageVector = Icons.Filled.Edit,
-                contentDescription = "编辑",
-                tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f),
-                modifier = Modifier
-                    .clip(RoundedCornerShape(8.dp))
-                    .clickable { onEdit() }
-                    .padding(6.dp)
-                    .size(16.dp)
+            RoundAction("归档", ActionArchive, Icons.Filled.Archive) {
+                onArchive(); scope.launch { offsetX.animateTo(0f, spring()) }; onReveal(null)
+            }
+            RoundAction("删除", ActionDelete, Icons.Filled.DeleteOutline) {
+                onDelete(); scope.launch { offsetX.animateTo(0f, spring()) }; onReveal(null)
+            }
+        }
+
+        Card(
+            modifier = Modifier
+                .fillMaxWidth()
+                .then(cardModifier)
+                .offset { IntOffset(offsetX.value.roundToInt(), 0) }
+                .scale(cardScale)
+                .alpha(sourceAlpha)
+                .pointerInput(rule.id, revealed) {
+                    detectHorizontalDragGestures(
+                        onDragEnd = {
+                            val target = when {
+                                offsetX.value > 160f -> 1f   // 右滑到底 = 完成
+                                offsetX.value < -actionsWidthPx / 2 -> -actionsWidthPx
+                                else -> 0f
+                            }
+                            if (target == 1f) {
+                                scope.launch {
+                                    succeeded = true
+                                    onDone()
+                                    offsetX.animateTo(600f, tween(180))
+                                    offsetX.snapTo(0f)
+                                    succeeded = false
+                                }
+                            } else {
+                                scope.launch {
+                                    offsetX.animateTo(target, spring(stiffness = Spring.StiffnessMediumLow))
+                                }
+                                onReveal(if (target == 0f) null else rule.id)
+                            }
+                        },
+                        onHorizontalDrag = { change, delta ->
+                            change.consume()
+                            val next = (offsetX.value + delta).coerceIn(-actionsWidthPx, 600f)
+                            scope.launch { offsetX.snapTo(next) }
+                        }
+                    )
+                },
+            shape = RoundedCornerShape(14.dp),
+            colors = CardDefaults.cardColors(
+                containerColor = MaterialTheme.colorScheme.surfaceVariant
             )
-            Icon(
-                imageVector = Icons.Filled.DragIndicator,
-                contentDescription = "长按拖到文件夹",
-                tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f),
+        ) {
+            Row(
                 modifier = Modifier
-                    .padding(end = 4.dp)
-                    .size(22.dp)
-                    .then(dragHandleModifier)
+                    .combinedClickable(onClick = onOpen, onLongClick = null)
+                    .padding(start = 14.dp, end = 6.dp, top = 12.dp, bottom = 12.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Column(Modifier.weight(1f)) {
+                    Text(
+                        text = rule.ifText,
+                        style = MaterialTheme.typography.bodyLarge,
+                        color = MaterialTheme.colorScheme.onSurface
+                    )
+                    Spacer(Modifier.height(2.dp))
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Text(
+                            text = "→ ${rule.thenText}",
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier.weight(1f, fill = false)
+                        )
+                        StreakChip(stat.streak)
+                    }
+                }
+                Icon(
+                    imageVector = Icons.Filled.DragIndicator,
+                    contentDescription = "长按拖到文件夹",
+                    tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.55f),
+                    modifier = Modifier
+                        .padding(end = 4.dp)
+                        .size(22.dp)
+                        .then(dragHandleModifier)
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun RoundAction(
+    label: String,
+    color: Color,
+    icon: androidx.compose.ui.graphics.vector.ImageVector,
+    onClick: () -> Unit
+) {
+    Column(
+        horizontalAlignment = Alignment.CenterHorizontally,
+        modifier = Modifier.width(56.dp)
+    ) {
+        Box(
+            modifier = Modifier
+                .size(44.dp)
+                .clip(CircleShape)
+                .background(color)
+                .clickable { onClick() },
+            contentAlignment = Alignment.Center
+        ) {
+            Icon(
+                imageVector = icon,
+                contentDescription = label,
+                tint = Color.White,
+                modifier = Modifier.size(20.dp)
             )
         }
+        Spacer(Modifier.height(2.dp))
+        Text(
+            label,
+            style = MaterialTheme.typography.labelSmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant
+        )
     }
 }
 
@@ -239,11 +421,16 @@ fun FolderRow(
     modifier: Modifier = Modifier
 ) {
     val accent = Color(folder.color)
+    val scale by animateFloatAsState(
+        targetValue = if (hovered) 1.03f else 1f,
+        animationSpec = spring(dampingRatio = Spring.DampingRatioMediumBouncy),
+        label = "folderHover"
+    )
     Card(
-        modifier = modifier.fillMaxWidth(),
+        modifier = modifier.fillMaxWidth().scale(scale),
         shape = RoundedCornerShape(14.dp),
         colors = CardDefaults.cardColors(
-            containerColor = if (hovered) accent.copy(alpha = 0.30f) else accent.copy(alpha = 0.10f)
+            containerColor = if (hovered) accent.copy(alpha = 0.34f) else accent.copy(alpha = 0.10f)
         ),
         border = if (hovered) BorderStroke(2.dp, accent) else null
     ) {
@@ -360,10 +547,18 @@ fun Heatmap(counts: List<Int>, modifier: Modifier = Modifier) {
     val low = MaterialTheme.colorScheme.primary.copy(alpha = 0.30f)
     val mid = MaterialTheme.colorScheme.primary.copy(alpha = 0.55f)
     val high = MaterialTheme.colorScheme.primary
+    var appeared by remember { mutableStateOf(false) }
+    LaunchedEffect(Unit) { appeared = true }
     Column(modifier = modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-        counts.chunked(10).forEach { row ->
+        counts.chunked(10).forEachIndexed { rowIndex, row ->
             Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                row.forEach { c ->
+                row.forEachIndexed { colIndex, c ->
+                    val delayMs = (rowIndex * 10 + colIndex) * 12
+                    val alpha by animateFloatAsState(
+                        targetValue = if (appeared) 1f else 0f,
+                        animationSpec = tween(durationMillis = 260, delayMillis = delayMs),
+                        label = "heatAlpha"
+                    )
                     val level = when {
                         c <= 0 -> base
                         c <= 2 -> low
@@ -375,7 +570,7 @@ fun Heatmap(counts: List<Int>, modifier: Modifier = Modifier) {
                             .weight(1f)
                             .aspectRatio(1f)
                             .clip(RoundedCornerShape(6.dp))
-                            .background(level)
+                            .background(level.copy(alpha = level.alpha * alpha))
                     )
                 }
                 repeat(10 - row.size) {

@@ -77,12 +77,14 @@ fun ReviewScreen(
                 }
             }
             items(state.todayLogs, key = { "t${it.id}" }) { log ->
+                androidx.compose.foundation.layout.Box(Modifier.animateItem()) {
                 TodayLogRow(
                     log = log,
                     ruleIf = state.ruleById[log.ruleId]?.ifText ?: "（已删除的预案）",
                     onResolve = { done -> vm.resolveLog(log, done) },
                     onDelete = { vm.deleteLog(log) }
                 )
+                }
             }
 
             item { SectionHeader("最近 30 天") }

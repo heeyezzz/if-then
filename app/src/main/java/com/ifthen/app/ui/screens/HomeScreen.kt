@@ -1,9 +1,14 @@
 package com.ifthen.app.ui.screens
 
+import androidx.compose.animation.animateContentSize
+import androidx.compose.animation.core.Spring
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.spring
 import androidx.compose.foundation.gestures.detectDragGesturesAfterLongPress
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
@@ -11,6 +16,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
@@ -18,7 +24,6 @@ import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -28,8 +33,9 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
-import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.alpha
+import androidx.compose.ui.draw.scale
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.input.pointer.pointerInput
@@ -37,24 +43,29 @@ import androidx.compose.ui.layout.boundsInWindow
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.layout.positionInWindow
 import androidx.compose.ui.unit.IntOffset
+import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
 import com.ifthen.app.data.Folder
+import com.ifthen.app.data.Rule
 import com.ifthen.app.ui.AppUiState
 import com.ifthen.app.ui.AppViewModel
 import com.ifthen.app.ui.SuccessChime
 import com.ifthen.app.ui.components.FolderEditorDialog
 import com.ifthen.app.ui.components.FolderRow
-import com.ifthen.app.ui.components.RuleCard
 import com.ifthen.app.ui.components.RuleChip
 import com.ifthen.app.ui.components.SectionHeader
+import com.ifthen.app.ui.components.SwipeRuleCard
 import com.ifthen.app.ui.components.TitleBar
 import kotlinx.coroutines.launch
-import kotlin.math.roundToInt
 
 private class DragState {
     var ruleId by mutableStateOf<Long?>(null)
     var ruleText by mutableStateOf("")
+    var ruleThen by mutableStateOf("")
+    var streak by mutableStateOf(0)
     var pos by mutableStateOf(Offset.Zero)
+    var grab by mutableStateOf(Offset.Zero)
+    var size by mutableStateOf(IntSize.Zero)
     val folderBounds = mutableStateMapOf<Long, Rect>()
 
     val hoverFolderId: Long?
@@ -72,10 +83,13 @@ fun HomeScreen(
 ) {
     val scope = rememberCoroutineScope()
     val drag = remember { DragState() }
+    val cardRects = remember { mutableStateMapOf<Long, Rect>() }
+    var revealedId by remember { mutableStateOf<Long?>(null) }
     var creatingFolder by remember { mutableStateOf(false) }
     var managingFolder by remember { mutableStateOf<Folder?>(null) }
     var pendingDelete by remember { mutableStateOf<Folder?>(null) }
     var deleteImpact by remember { mutableStateOf<Pair<Int, Int>?>(null) }
+    var ruleToDelete by remember { mutableStateOf<Rule?>(null) }
 
     val inFolder = state.currentFolderId != null
 
@@ -115,10 +129,7 @@ fun HomeScreen(
                                     vm.logDone(rule.id)
                                     onRecord("${rule.thenText} ✓")
                                 },
-                                onLongClick = {
-                                    vm.logNotDone(rule.id)
-                                    onRecord("记下了：这次没做")
-                                }
+                                onLongClick = { onEdit(rule.id) }
                             )
                         }
                     }
@@ -136,29 +147,50 @@ fun HomeScreen(
                         hovered = drag.hoverFolderId == folder.id,
                         onClick = { vm.openFolder(folder.id) },
                         onLongClick = { managingFolder = folder },
-                        modifier = Modifier.onGloballyPositioned { coords ->
-                            drag.folderBounds[folder.id] = coords.boundsInWindow()
-                        }
+                        modifier = Modifier
+                            .animateItem()
+                            .onGloballyPositioned { coords ->
+                                drag.folderBounds[folder.id] = coords.boundsInWindow()
+                            }
                     )
                 }
             }
 
             val rules = state.visibleRules
             if (rules.isNotEmpty()) {
-                item { SectionHeader(title = "预案") }
+                item { SectionHeader("预案") }
                 items(rules, key = { "a${it.id}" }) { rule ->
                     val handlePos = remember { mutableStateOf(Offset.Zero) }
-                    RuleCard(
+                    SwipeRuleCard(
                         rule = rule,
                         stat = state.stats[rule.id] ?: com.ifthen.app.ui.RuleStat(),
+                        revealedId = revealedId,
+                        onReveal = { revealedId = it },
+                        dragging = drag.ruleId == rule.id,
+                        cardModifier = Modifier
+                            .animateItem()
+                            .onGloballyPositioned { coords ->
+                                cardRects[rule.id] = coords.boundsInWindow()
+                            },
                         dragHandleModifier = Modifier
                             .onGloballyPositioned { handlePos.value = it.positionInWindow() }
                             .pointerInput(rule.id) {
                                 detectDragGesturesAfterLongPress(
                                     onDragStart = { off ->
+                                        val cardRect = cardRects[rule.id]
+                                        val finger = handlePos.value + off
                                         drag.ruleId = rule.id
                                         drag.ruleText = rule.ifText
-                                        drag.pos = handlePos.value + off
+                                        drag.ruleThen = rule.thenText
+                                        drag.streak = state.stats[rule.id]?.streak ?: 0
+                                        drag.pos = finger
+                                        drag.size = IntSize(
+                                            cardRect?.width?.toInt() ?: 0,
+                                            cardRect?.height?.toInt() ?: 0
+                                        )
+                                        drag.grab = if (cardRect != null) {
+                                            Offset(finger.x - cardRect.left, finger.y - cardRect.top)
+                                        } else Offset.Zero
                                     },
                                     onDrag = { change, amount ->
                                         change.consume()
@@ -177,16 +209,21 @@ fun HomeScreen(
                                     onDragCancel = { drag.ruleId = null }
                                 )
                             },
-                        onClick = {
+                        onDone = {
                             SuccessChime.play()
                             vm.logDone(rule.id)
                             onRecord("${rule.thenText} ✓")
                         },
-                        onLongClick = {
+                        onMiss = {
                             vm.logNotDone(rule.id)
                             onRecord("记下了：这次没做")
                         },
-                        onEdit = { onEdit(rule.id) }
+                        onArchive = {
+                            vm.setArchived(rule, true)
+                            onRecord("已归档")
+                        },
+                        onDelete = { ruleToDelete = rule },
+                        onOpen = { onEdit(rule.id) }
                     )
                 }
             } else if (state.visibleFolders.isEmpty() && frequentRules.isEmpty()) {
@@ -203,27 +240,47 @@ fun HomeScreen(
             item { Spacer(Modifier.height(72.dp)) }
         }
 
-        // 拖拽跟手浮层
-        if (drag.ruleId != null) {
+        // 拖拽跟手浮层：整张卡片（同宽同形）跟着手指
+        drag.ruleId?.let {
+            val density = androidx.compose.ui.platform.LocalDensity.current
+            val ghostWidth = with(density) { drag.size.width.toDp() }
+            val ghostHeightPx = drag.size.height.toFloat()
             Card(
                 modifier = Modifier
+                    .width(ghostWidth)
                     .offset {
                         IntOffset(
-                            (drag.pos.x - 60).roundToInt(),
-                            (drag.pos.y - 60).roundToInt()
+                            (drag.pos.x - drag.size.width / 2f).toInt(),
+                            (drag.pos.y - ghostHeightPx / 2f).toInt()
                         )
-                    },
+                    }
+                    .scale(1.03f)
+                    .alpha(0.97f),
+                shape = androidx.compose.foundation.shape.RoundedCornerShape(14.dp),
                 colors = CardDefaults.cardColors(
                     containerColor = MaterialTheme.colorScheme.primaryContainer
                 ),
-                elevation = CardDefaults.cardElevation(defaultElevation = 6.dp)
+                elevation = CardDefaults.cardElevation(defaultElevation = 8.dp)
             ) {
-                Text(
-                    drag.ruleText,
-                    style = MaterialTheme.typography.labelLarge,
-                    color = MaterialTheme.colorScheme.onPrimaryContainer,
-                    modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp)
-                )
+                Row(
+                    modifier = Modifier.padding(start = 14.dp, end = 6.dp, top = 12.dp, bottom = 12.dp),
+                    verticalAlignment = androidx.compose.ui.Alignment.CenterVertically
+                ) {
+                    Column(Modifier.fillMaxWidth().weight(1f)) {
+                        Text(
+                            text = drag.ruleText,
+                            style = MaterialTheme.typography.bodyLarge,
+                            color = MaterialTheme.colorScheme.onPrimaryContainer
+                        )
+                        Spacer(Modifier.height(2.dp))
+                        Text(
+                            text = "→ ${drag.ruleThen}",
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.8f)
+                        )
+                    }
+                    com.ifthen.app.ui.components.StreakChip(drag.streak)
+                }
             }
         }
     }
@@ -253,6 +310,22 @@ fun HomeScreen(
                 deleteImpact = null
                 scope.launch { deleteImpact = vm.folderDeleteImpact(folder.id) }
             }
+        )
+    }
+
+    ruleToDelete?.let { rule ->
+        AlertDialog(
+            onDismissRequest = { ruleToDelete = null },
+            title = { Text("删除这条预案？") },
+            text = { Text("「${rule.ifText}」及其全部打卡记录会被永久删除，无法恢复。") },
+            confirmButton = {
+                TextButton(onClick = {
+                    vm.deleteRule(rule)
+                    ruleToDelete = null
+                    onRecord("已删除")
+                }) { Text("删除") }
+            },
+            dismissButton = { TextButton(onClick = { ruleToDelete = null }) { Text("取消") } }
         )
     }
 

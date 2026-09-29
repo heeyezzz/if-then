@@ -4,6 +4,13 @@ import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
+import androidx.compose.animation.core.FastOutLinearInEasing
+import androidx.compose.animation.core.LinearOutSlowInEasing
+import androidx.compose.animation.core.tween
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.slideInHorizontally
+import androidx.compose.animation.slideOutHorizontally
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
@@ -109,7 +116,17 @@ private fun AppRoot() {
         NavHost(
             navController = navController,
             startDestination = "home",
-            modifier = Modifier.padding(innerPadding)
+            modifier = Modifier.padding(innerPadding),
+            enterTransition = {
+                slideInHorizontally(animationSpec = tween(260, easing = LinearOutSlowInEasing)) { it / 8 } +
+                    fadeIn(animationSpec = tween(260))
+            },
+            exitTransition = { fadeOut(animationSpec = tween(160)) },
+            popEnterTransition = { fadeIn(animationSpec = tween(220)) },
+            popExitTransition = {
+                slideOutHorizontally(animationSpec = tween(240, easing = FastOutLinearInEasing)) { it / 8 } +
+                    fadeOut(animationSpec = tween(240))
+            }
         ) {
             composable("home") {
                 HomeScreen(vm, state, onEdit = { navController.navigate("rule_edit/$it") }, onRecord = toast)
