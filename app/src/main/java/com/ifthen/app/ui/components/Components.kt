@@ -82,6 +82,10 @@ val FolderColors = listOf(0xFF1F6E5C, 0xFF2F5DA8, 0xFF6A4FA3, 0xFFB8860B, 0xFF8C
 val InsertLineColor = Color(0xFF1F6E5C)
 
 val ActionMiss = Color(0xFFE08A2E)
+/** 动作钮列宽与间距：露出宽度由它们算出，避免卡片压住最左侧按钮 */
+val ActionColumnWidth = 52
+val ActionGap = 6
+
 val ActionMove = Color(0xFF3D6E8C)
 val ActionArchive = Color(0xFF5B6E8C)
 val ActionDelete = Color(0xFFC0392B)
@@ -258,7 +262,7 @@ fun SwipeRuleCard(
 ) {
     val scope = rememberCoroutineScope()
     val density = LocalDensity.current
-    val actionsWidthPx = with(density) { 196.dp.toPx() }
+    val actionsWidthPx = with(density) { (ActionColumnWidth * 4 + ActionGap * 3 + 2).dp.toPx() }
     val offsetX = remember { Animatable(0f) }
     var pendingJob by remember { mutableStateOf<kotlinx.coroutines.Job?>(null) }
     var cardWidthPx by remember { mutableStateOf(0f) }
@@ -296,7 +300,7 @@ fun SwipeRuleCard(
                 .height(with(density) { 76.dp })
                 .padding(end = 2.dp),
             verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(6.dp)
+            horizontalArrangement = Arrangement.spacedBy(ActionGap.dp)
         ) {
             RoundAction("没做", ActionMiss, Icons.Filled.Close) {
                 onMiss(); scope.launch { offsetX.animateTo(0f, spring()) }; onReveal(null)
@@ -397,7 +401,7 @@ private fun RoundAction(
     Column(
         horizontalAlignment = Alignment.CenterHorizontally,
         modifier = Modifier
-            .width(52.dp)
+            .width(ActionColumnWidth.dp)
             .clip(RoundedCornerShape(10.dp))
             .clickable { onClick() }
             .padding(vertical = 4.dp)
