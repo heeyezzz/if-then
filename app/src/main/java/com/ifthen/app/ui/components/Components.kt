@@ -243,6 +243,7 @@ fun SwipeRuleCard(
     revealedId: Long?,
     onReveal: (Long?) -> Unit,
     dragging: Boolean = false,
+    swipeEnabled: Boolean = true,
     dragHandleModifier: Modifier = Modifier,
     onDone: () -> Unit,
     onMiss: () -> Unit,
@@ -254,11 +255,15 @@ fun SwipeRuleCard(
 ) {
     val scope = rememberCoroutineScope()
     val density = LocalDensity.current
-    val actionsWidthPx = with(density) { 196.dp.toPx() }
+    val actionsWidthPx = with(density) { 150.dp.toPx() }
     val offsetX = remember { Animatable(0f) }
     var pendingJob by remember { mutableStateOf<kotlinx.coroutines.Job?>(null) }
     var cardWidthPx by remember { mutableStateOf(0f) }
     var succeeded by remember { mutableStateOf(false) }
+    val revealProgress = if (offsetX.value < 0f) {
+        (-offsetX.value / actionsWidthPx).coerceIn(0f, 1f)
+    } else 0f
+    val contentAlpha = 1f - revealProgress
     val cardScale by animateFloatAsState(
         targetValue = if (succeeded) 1.02f else 1f,
         animationSpec = spring(dampingRatio = Spring.DampingRatioMediumBouncy),
@@ -289,9 +294,9 @@ fun SwipeRuleCard(
                 .align(Alignment.CenterEnd)
                 .alpha(buttonsVisible)
                 .height(with(density) { 56.dp })
-                .padding(end = 4.dp),
+                .padding(end = 2.dp),
             verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(10.dp)
+            horizontalArrangement = Arrangement.spacedBy(6.dp)
         ) {
             RoundAction("没做", ActionMiss, Icons.Filled.Close) {
                 onMiss(); scope.launch { offsetX.animateTo(0f, spring()) }; onReveal(null)
@@ -312,8 +317,8 @@ fun SwipeRuleCard(
                 .offset { IntOffset(offsetX.value.roundToInt(), 0) }
                 .scale(cardScale)
                 .alpha(sourceAlpha)
-                .pointerInput(rule.id, revealed) {
-                    detectHorizontalDragGestures(
+                .pointerInput(rule.id, revealed, swipeEnabled) {
+                    if (swipeEnabled) detectHorizontalDragGestures(
                         onDragEnd = {
                             pendingJob?.cancel()
                             val target = when {
@@ -358,7 +363,7 @@ fun SwipeRuleCard(
                     .padding(start = 14.dp, end = 6.dp, top = 12.dp, bottom = 12.dp),
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                Column(Modifier.weight(1f)) {
+                Column(Modifier.weight(1f).alpha(contentAlpha)) {
                     Text(
                         text = rule.ifText,
                         style = MaterialTheme.typography.bodyLarge,
@@ -380,6 +385,7 @@ fun SwipeRuleCard(
                     contentDescription = "长按拖到文件夹",
                     tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.55f),
                     modifier = Modifier
+                        .alpha(contentAlpha)
                         .padding(end = 4.dp)
                         .size(22.dp)
                         .then(dragHandleModifier)
@@ -398,11 +404,11 @@ private fun RoundAction(
 ) {
     Column(
         horizontalAlignment = Alignment.CenterHorizontally,
-        modifier = Modifier.width(56.dp)
+        modifier = Modifier.width(44.dp)
     ) {
         Box(
             modifier = Modifier
-                .size(44.dp)
+                .size(38.dp)
                 .clip(CircleShape)
                 .background(color)
                 .clickable { onClick() },
@@ -412,7 +418,7 @@ private fun RoundAction(
                 imageVector = icon,
                 contentDescription = label,
                 tint = Color.White,
-                modifier = Modifier.size(20.dp)
+                modifier = Modifier.size(18.dp)
             )
         }
         Spacer(Modifier.height(2.dp))

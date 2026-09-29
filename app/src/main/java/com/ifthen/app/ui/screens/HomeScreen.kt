@@ -1,5 +1,6 @@
 package com.ifthen.app.ui.screens
 
+import androidx.compose.foundation.background
 import androidx.compose.foundation.gestures.detectDragGesturesAfterLongPress
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -33,6 +34,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.scale
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Rect
@@ -68,6 +70,10 @@ private class DragState {
     var pos by mutableStateOf(Offset.Zero)
     var size by mutableStateOf(IntSize.Zero)
     val folderBounds = mutableStateMapOf<Long, Rect>()
+    var rootBounds by mutableStateOf<Rect?>(null)
+
+    val rootHovered: Boolean
+        get() = ruleId != null && rootBounds?.contains(pos) == true
 
     val hoverFolderId: Long?
         get() = if (ruleId == null) null
@@ -106,6 +112,7 @@ fun HomeScreen(
             revealedId = revealedId,
             onReveal = { revealedId = it },
             dragging = drag.ruleId == rule.id,
+            swipeEnabled = drag.ruleId == null,
             modifier = if (indented) Modifier.padding(start = 18.dp) else Modifier,
             cardModifier = itemModifier
                 .onGloballyPositioned { coords -> cardRects[rule.id] = coords.boundsInWindow() },
@@ -131,13 +138,22 @@ fun HomeScreen(
                             drag.pos += amount
                         },
                         onDragEnd = {
+                            val toRoot = drag.rootHovered
                             val target = drag.hoverFolderId
                             val id = drag.ruleId
                             drag.ruleId = null
-                            if (target != null && id != null) {
-                                vm.moveRule(id, target)
-                                val f = state.folders.firstOrNull { it.id == target }
-                                onRecord("已挪进 ${f?.emoji ?: ""}${f?.name ?: ""}")
+                            if (id != null) {
+                                when {
+                                    toRoot -> {
+                                        vm.moveRule(id, null)
+                                        onRecord("已移出到根目录")
+                                    }
+                                    target != null -> {
+                                        vm.moveRule(id, target)
+                                        val f = state.folders.firstOrNull { it.id == target }
+                                        onRecord("已挪进 ${f?.emoji ?: ""}${f?.name ?: ""}")
+                                    }
+                                }
                             }
                         },
                         onDragCancel = { drag.ruleId = null }
@@ -178,6 +194,31 @@ fun HomeScreen(
                         TextButton(onClick = { creatingFolder = true }) { Text("+ 文件夹") }
                     }
                 )
+            }
+
+            if (inFolder && drag.ruleId != null) {
+                item(key = "rootdrop") {
+                    val hovered = drag.rootHovered
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clip(RoundedCornerShape(14.dp))
+                            .background(
+                                if (hovered) MaterialTheme.colorScheme.primaryContainer
+                                else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.6f)
+                            )
+                            .onGloballyPositioned { drag.rootBounds = it.boundsInWindow() }
+                            .padding(vertical = 14.dp),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Text(
+                            "松手移出到根目录",
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = if (hovered) MaterialTheme.colorScheme.onPrimaryContainer
+                            else MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                }
             }
 
             val frequentRules = state.frequentRuleIds.mapNotNull { state.ruleById[it] }
