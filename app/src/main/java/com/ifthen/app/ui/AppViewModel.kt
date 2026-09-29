@@ -265,11 +265,6 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
-    /** 同层重排：按给定顺序写入 sortOrder */
-    fun reorderLevel(orderedIds: List<Long>) = viewModelScope.launch(Dispatchers.IO) {
-        orderedIds.forEachIndexed { index, id -> db.ruleDao().updateSortOrder(id, index) }
-    }
-
     fun addCandidates(candidates: List<AiCandidate>, folderId: Long?) = viewModelScope.launch(Dispatchers.IO) {
         var order = db.ruleDao().maxSortOrder(folderId) + 1
         candidates.forEach { c ->

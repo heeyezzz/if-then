@@ -293,7 +293,7 @@ fun SwipeRuleCard(
             modifier = Modifier
                 .align(Alignment.CenterEnd)
                 .alpha(buttonsVisible)
-                .height(with(density) { 56.dp })
+                .height(with(density) { 76.dp })
                 .padding(end = 2.dp),
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(6.dp)
