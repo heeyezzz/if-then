@@ -64,6 +64,14 @@ fun HomeScreen(
 
     val inFolder = state.currentFolderId != null
 
+    // 系统返回键：先收起展开的动作钮，再退回上一层文件夹；都在根目录时才交给系统
+    androidx.activity.compose.BackHandler(enabled = revealedId != null || inFolder) {
+        when {
+            revealedId != null -> revealedId = null
+            inFolder -> vm.openFolder(state.crumbs.lastOrNull()?.parentId)
+        }
+    }
+
     // 滚动列表时，把展开的卡片归位
     LaunchedEffect(listState) {
         snapshotFlow { listState.isScrollInProgress }.collect { scrolling ->
