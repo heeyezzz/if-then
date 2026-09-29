@@ -58,9 +58,11 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.rotate
 import androidx.compose.ui.draw.scale
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.IntOffset
@@ -254,6 +256,8 @@ fun SwipeRuleCard(
     val density = LocalDensity.current
     val actionsWidthPx = with(density) { 196.dp.toPx() }
     val offsetX = remember { Animatable(0f) }
+    var pendingJob by remember { mutableStateOf<kotlinx.coroutines.Job?>(null) }
+    var cardWidthPx by remember { mutableStateOf(0f) }
     var succeeded by remember { mutableStateOf(false) }
     val cardScale by animateFloatAsState(
         targetValue = if (succeeded) 1.02f else 1f,
@@ -275,10 +279,15 @@ fun SwipeRuleCard(
 
     Box(modifier = modifier.fillMaxWidth()) {
         // 左滑露出的动作钮（在卡片下层）
+        val buttonsVisible by animateFloatAsState(
+            targetValue = if (!dragging && offsetX.value < -4f) 1f else 0f,
+            animationSpec = tween(120),
+            label = "buttonsAlpha"
+        )
         Row(
             modifier = Modifier
                 .align(Alignment.CenterEnd)
-                .alpha(if (dragging) 0f else 1f)
+                .alpha(buttonsVisible)
                 .height(with(density) { 56.dp })
                 .padding(end = 4.dp),
             verticalAlignment = Alignment.CenterVertically,
@@ -299,27 +308,31 @@ fun SwipeRuleCard(
             modifier = Modifier
                 .fillMaxWidth()
                 .then(cardModifier)
+                .onSizeChanged { cardWidthPx = it.width.toFloat() }
                 .offset { IntOffset(offsetX.value.roundToInt(), 0) }
                 .scale(cardScale)
                 .alpha(sourceAlpha)
                 .pointerInput(rule.id, revealed) {
                     detectHorizontalDragGestures(
                         onDragEnd = {
+                            pendingJob?.cancel()
                             val target = when {
-                                offsetX.value > 160f -> 1f   // 右滑到底 = 完成
+                                offsetX.value > 140f -> 1f   // 右滑到底 = 完成
                                 offsetX.value < -actionsWidthPx / 2 -> -actionsWidthPx
                                 else -> 0f
                             }
                             if (target == 1f) {
-                                scope.launch {
+                                pendingJob = scope.launch {
                                     succeeded = true
                                     onDone()
-                                    offsetX.animateTo(600f, tween(180))
+                                    offsetX.animateTo(
+                                        cardWidthPx.coerceAtLeast(320f), tween(180)
+                                    )
                                     offsetX.snapTo(0f)
                                     succeeded = false
                                 }
                             } else {
-                                scope.launch {
+                                pendingJob = scope.launch {
                                     offsetX.animateTo(target, spring(stiffness = Spring.StiffnessMediumLow))
                                 }
                                 onReveal(if (target == 0f) null else rule.id)
@@ -327,8 +340,10 @@ fun SwipeRuleCard(
                         },
                         onHorizontalDrag = { change, delta ->
                             change.consume()
-                            val next = (offsetX.value + delta).coerceIn(-actionsWidthPx, 600f)
-                            scope.launch { offsetX.snapTo(next) }
+                            pendingJob?.cancel()
+                            val next = (offsetX.value + delta)
+                                .coerceIn(-actionsWidthPx, cardWidthPx.coerceAtLeast(320f))
+                            pendingJob = scope.launch { offsetX.snapTo(next) }
                         }
                     )
                 },
@@ -416,6 +431,8 @@ fun FolderRow(
     folder: Folder,
     ruleCount: Int,
     hovered: Boolean,
+    expanded: Boolean = false,
+    onToggleExpand: () -> Unit = {},
     onClick: () -> Unit,
     onLongClick: () -> Unit,
     modifier: Modifier = Modifier
@@ -457,12 +474,25 @@ fun FolderRow(
                 )
                 Spacer(Modifier.width(6.dp))
             }
-            Icon(
-                imageVector = Icons.AutoMirrored.Filled.KeyboardArrowRight,
-                contentDescription = null,
-                tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                modifier = Modifier.size(18.dp)
+            val arrowRotation by animateFloatAsState(
+                targetValue = if (expanded) 90f else 0f,
+                animationSpec = spring(dampingRatio = Spring.DampingRatioMediumBouncy),
+                label = "arrow"
             )
+            Box(
+                modifier = Modifier
+                    .size(40.dp)
+                    .clip(CircleShape)
+                    .clickable { onToggleExpand() },
+                contentAlignment = Alignment.Center
+            ) {
+                Icon(
+                    imageVector = Icons.AutoMirrored.Filled.KeyboardArrowRight,
+                    contentDescription = if (expanded) "收起该文件夹" else "在本页展开该文件夹",
+                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.size(20.dp).rotate(arrowRotation)
+                )
+            }
         }
     }
 }

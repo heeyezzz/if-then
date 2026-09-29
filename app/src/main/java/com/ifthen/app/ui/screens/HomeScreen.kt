@@ -1,15 +1,11 @@
 package com.ifthen.app.ui.screens
 
-import androidx.compose.animation.animateContentSize
-import androidx.compose.animation.core.Spring
-import androidx.compose.animation.core.animateFloatAsState
-import androidx.compose.animation.core.spring
 import androidx.compose.foundation.gestures.detectDragGesturesAfterLongPress
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -20,6 +16,7 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
@@ -33,6 +30,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.scale
@@ -42,6 +40,8 @@ import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.boundsInWindow
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.layout.positionInWindow
+import androidx.compose.ui.platform.LocalConfiguration
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
@@ -49,11 +49,13 @@ import com.ifthen.app.data.Folder
 import com.ifthen.app.data.Rule
 import com.ifthen.app.ui.AppUiState
 import com.ifthen.app.ui.AppViewModel
+import com.ifthen.app.ui.RuleStat
 import com.ifthen.app.ui.SuccessChime
 import com.ifthen.app.ui.components.FolderEditorDialog
 import com.ifthen.app.ui.components.FolderRow
 import com.ifthen.app.ui.components.RuleChip
 import com.ifthen.app.ui.components.SectionHeader
+import com.ifthen.app.ui.components.StreakChip
 import com.ifthen.app.ui.components.SwipeRuleCard
 import com.ifthen.app.ui.components.TitleBar
 import kotlinx.coroutines.launch
@@ -64,7 +66,6 @@ private class DragState {
     var ruleThen by mutableStateOf("")
     var streak by mutableStateOf(0)
     var pos by mutableStateOf(Offset.Zero)
-    var grab by mutableStateOf(Offset.Zero)
     var size by mutableStateOf(IntSize.Zero)
     val folderBounds = mutableStateMapOf<Long, Rect>()
 
@@ -85,6 +86,7 @@ fun HomeScreen(
     val drag = remember { DragState() }
     val cardRects = remember { mutableStateMapOf<Long, Rect>() }
     var revealedId by remember { mutableStateOf<Long?>(null) }
+    var expandedFolders by remember { mutableStateOf(setOf<Long>()) }
     var creatingFolder by remember { mutableStateOf(false) }
     var managingFolder by remember { mutableStateOf<Folder?>(null) }
     var pendingDelete by remember { mutableStateOf<Folder?>(null) }
@@ -92,6 +94,72 @@ fun HomeScreen(
     var ruleToDelete by remember { mutableStateOf<Rule?>(null) }
 
     val inFolder = state.currentFolderId != null
+    val density = LocalDensity.current
+    val screenWidthPx = with(density) { LocalConfiguration.current.screenWidthDp.dp.toPx() }
+
+    @Composable
+    fun RuleRow(rule: Rule, indented: Boolean, itemModifier: Modifier = Modifier) {
+        val handlePos = remember { mutableStateOf(Offset.Zero) }
+        SwipeRuleCard(
+            rule = rule,
+            stat = state.stats[rule.id] ?: RuleStat(),
+            revealedId = revealedId,
+            onReveal = { revealedId = it },
+            dragging = drag.ruleId == rule.id,
+            modifier = if (indented) Modifier.padding(start = 18.dp) else Modifier,
+            cardModifier = itemModifier
+                .onGloballyPositioned { coords -> cardRects[rule.id] = coords.boundsInWindow() },
+            dragHandleModifier = Modifier
+                .onGloballyPositioned { handlePos.value = it.positionInWindow() }
+                .pointerInput(rule.id) {
+                    detectDragGesturesAfterLongPress(
+                        onDragStart = { off ->
+                            val cardRect = cardRects[rule.id]
+                            val finger = handlePos.value + off
+                            drag.ruleId = rule.id
+                            drag.ruleText = rule.ifText
+                            drag.ruleThen = rule.thenText
+                            drag.streak = state.stats[rule.id]?.streak ?: 0
+                            drag.pos = finger
+                            drag.size = IntSize(
+                                cardRect?.width?.toInt() ?: 0,
+                                cardRect?.height?.toInt() ?: 0
+                            )
+                        },
+                        onDrag = { change, amount ->
+                            change.consume()
+                            drag.pos += amount
+                        },
+                        onDragEnd = {
+                            val target = drag.hoverFolderId
+                            val id = drag.ruleId
+                            drag.ruleId = null
+                            if (target != null && id != null) {
+                                vm.moveRule(id, target)
+                                val f = state.folders.firstOrNull { it.id == target }
+                                onRecord("已挪进 ${f?.emoji ?: ""}${f?.name ?: ""}")
+                            }
+                        },
+                        onDragCancel = { drag.ruleId = null }
+                    )
+                },
+            onDone = {
+                SuccessChime.play()
+                vm.logDone(rule.id)
+                onRecord("${rule.thenText} ✓")
+            },
+            onMiss = {
+                vm.logNotDone(rule.id)
+                onRecord("记下了：这次没做")
+            },
+            onArchive = {
+                vm.setArchived(rule, true)
+                onRecord("已归档")
+            },
+            onDelete = { ruleToDelete = rule },
+            onOpen = { onEdit(rule.id) }
+        )
+    }
 
     Box(modifier = modifier.fillMaxSize()) {
         LazyColumn(
@@ -137,22 +205,49 @@ fun HomeScreen(
             }
 
             if (state.visibleFolders.isNotEmpty()) {
-                item {
-                    SectionHeader(title = if (inFolder) "子文件夹" else "文件夹")
-                }
-                items(state.visibleFolders, key = { "d${it.id}" }) { folder ->
-                    FolderRow(
-                        folder = folder,
-                        ruleCount = state.activeRules.count { it.folderId == folder.id },
-                        hovered = drag.hoverFolderId == folder.id,
-                        onClick = { vm.openFolder(folder.id) },
-                        onLongClick = { managingFolder = folder },
-                        modifier = Modifier
-                            .animateItem()
-                            .onGloballyPositioned { coords ->
-                                drag.folderBounds[folder.id] = coords.boundsInWindow()
+                item { SectionHeader(title = if (inFolder) "子文件夹" else "文件夹") }
+                state.visibleFolders.forEach { folder ->
+                    item(key = "d${folder.id}") {
+                        FolderRow(
+                            folder = folder,
+                            ruleCount = state.activeRules.count { it.folderId == folder.id },
+                            hovered = drag.hoverFolderId == folder.id,
+                            expanded = folder.id in expandedFolders,
+                            onToggleExpand = {
+                                expandedFolders = if (folder.id in expandedFolders) {
+                                    expandedFolders - folder.id
+                                } else {
+                                    expandedFolders + folder.id
+                                }
+                            },
+                            onClick = { vm.openFolder(folder.id) },
+                            onLongClick = { managingFolder = folder },
+                            modifier = Modifier
+                                .animateItem()
+                                .onGloballyPositioned { coords ->
+                                    drag.folderBounds[folder.id] = coords.boundsInWindow()
+                                }
+                        )
+                    }
+                    if (folder.id in expandedFolders) {
+                        val children = state.activeRules.filter { it.folderId == folder.id }
+                        if (children.isEmpty()) {
+                            item(key = "empty${folder.id}") {
+                                Text(
+                                    "这个文件夹是空的",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    modifier = Modifier.padding(start = 26.dp, bottom = 6.dp)
+                                )
                             }
-                    )
+                        } else {
+                            children.forEach { child ->
+                                item(key = "n${child.id}") {
+                                    RuleRow(child, indented = true, itemModifier = Modifier.animateItem())
+                                }
+                            }
+                        }
+                    }
                 }
             }
 
@@ -160,71 +255,7 @@ fun HomeScreen(
             if (rules.isNotEmpty()) {
                 item { SectionHeader("预案") }
                 items(rules, key = { "a${it.id}" }) { rule ->
-                    val handlePos = remember { mutableStateOf(Offset.Zero) }
-                    SwipeRuleCard(
-                        rule = rule,
-                        stat = state.stats[rule.id] ?: com.ifthen.app.ui.RuleStat(),
-                        revealedId = revealedId,
-                        onReveal = { revealedId = it },
-                        dragging = drag.ruleId == rule.id,
-                        cardModifier = Modifier
-                            .animateItem()
-                            .onGloballyPositioned { coords ->
-                                cardRects[rule.id] = coords.boundsInWindow()
-                            },
-                        dragHandleModifier = Modifier
-                            .onGloballyPositioned { handlePos.value = it.positionInWindow() }
-                            .pointerInput(rule.id) {
-                                detectDragGesturesAfterLongPress(
-                                    onDragStart = { off ->
-                                        val cardRect = cardRects[rule.id]
-                                        val finger = handlePos.value + off
-                                        drag.ruleId = rule.id
-                                        drag.ruleText = rule.ifText
-                                        drag.ruleThen = rule.thenText
-                                        drag.streak = state.stats[rule.id]?.streak ?: 0
-                                        drag.pos = finger
-                                        drag.size = IntSize(
-                                            cardRect?.width?.toInt() ?: 0,
-                                            cardRect?.height?.toInt() ?: 0
-                                        )
-                                        drag.grab = if (cardRect != null) {
-                                            Offset(finger.x - cardRect.left, finger.y - cardRect.top)
-                                        } else Offset.Zero
-                                    },
-                                    onDrag = { change, amount ->
-                                        change.consume()
-                                        drag.pos += amount
-                                    },
-                                    onDragEnd = {
-                                        val target = drag.hoverFolderId
-                                        val id = drag.ruleId
-                                        drag.ruleId = null
-                                        if (target != null && id != null) {
-                                            vm.moveRule(id, target)
-                                            val f = state.folders.firstOrNull { it.id == target }
-                                            onRecord("已挪进 ${f?.emoji ?: ""}${f?.name ?: ""}")
-                                        }
-                                    },
-                                    onDragCancel = { drag.ruleId = null }
-                                )
-                            },
-                        onDone = {
-                            SuccessChime.play()
-                            vm.logDone(rule.id)
-                            onRecord("${rule.thenText} ✓")
-                        },
-                        onMiss = {
-                            vm.logNotDone(rule.id)
-                            onRecord("记下了：这次没做")
-                        },
-                        onArchive = {
-                            vm.setArchived(rule, true)
-                            onRecord("已归档")
-                        },
-                        onDelete = { ruleToDelete = rule },
-                        onOpen = { onEdit(rule.id) }
-                    )
+                    RuleRow(rule, indented = false, itemModifier = Modifier.animateItem())
                 }
             } else if (state.visibleFolders.isEmpty() && frequentRules.isEmpty()) {
                 item {
@@ -240,33 +271,34 @@ fun HomeScreen(
             item { Spacer(Modifier.height(72.dp)) }
         }
 
-        // 拖拽跟手浮层：整张卡片（同宽同形）跟着手指
+        // 拖拽跟手浮层：整卡矩形，且始终留在屏幕内
         drag.ruleId?.let {
-            val density = androidx.compose.ui.platform.LocalDensity.current
-            val ghostWidth = with(density) { drag.size.width.toDp() }
+            val ghostWidthDp = with(density) { drag.size.width.toDp() }
+            val ghostWidthPx = drag.size.width.toFloat()
             val ghostHeightPx = drag.size.height.toFloat()
             Card(
                 modifier = Modifier
-                    .width(ghostWidth)
+                    .width(ghostWidthDp)
                     .offset {
+                        val maxX = (screenWidthPx - ghostWidthPx).coerceAtLeast(0f)
                         IntOffset(
-                            (drag.pos.x - drag.size.width / 2f).toInt(),
+                            (drag.pos.x - ghostWidthPx / 2f).coerceIn(0f, maxX).toInt(),
                             (drag.pos.y - ghostHeightPx / 2f).toInt()
                         )
                     }
                     .scale(1.03f)
                     .alpha(0.97f),
-                shape = androidx.compose.foundation.shape.RoundedCornerShape(14.dp),
+                shape = RoundedCornerShape(14.dp),
                 colors = CardDefaults.cardColors(
                     containerColor = MaterialTheme.colorScheme.primaryContainer
                 ),
                 elevation = CardDefaults.cardElevation(defaultElevation = 8.dp)
             ) {
                 Row(
-                    modifier = Modifier.padding(start = 14.dp, end = 6.dp, top = 12.dp, bottom = 12.dp),
-                    verticalAlignment = androidx.compose.ui.Alignment.CenterVertically
+                    modifier = Modifier.padding(start = 14.dp, end = 14.dp, top = 12.dp, bottom = 12.dp),
+                    verticalAlignment = Alignment.CenterVertically
                 ) {
-                    Column(Modifier.fillMaxWidth().weight(1f)) {
+                    Column(Modifier.weight(1f)) {
                         Text(
                             text = drag.ruleText,
                             style = MaterialTheme.typography.bodyLarge,
@@ -279,7 +311,7 @@ fun HomeScreen(
                             color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.8f)
                         )
                     }
-                    com.ifthen.app.ui.components.StreakChip(drag.streak)
+                    StreakChip(drag.streak)
                 }
             }
         }
