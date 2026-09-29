@@ -1,14 +1,11 @@
 package com.ifthen.app.ui.components
 
-import android.content.ClipDescription
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
-import androidx.compose.foundation.draganddrop.dragAndDropSource
-import androidx.compose.foundation.draganddrop.dragAndDropTarget
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -23,8 +20,10 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
 import androidx.compose.material.icons.automirrored.filled.TrendingUp
-import androidx.compose.material.icons.filled.DragHandle
+import androidx.compose.material.icons.filled.DragIndicator
+import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
@@ -40,11 +39,6 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draganddrop.DragAndDropEvent
-import androidx.compose.ui.draganddrop.DragAndDropTarget
-import androidx.compose.ui.draganddrop.DragAndDropTransferData
-import androidx.compose.ui.draganddrop.mimeTypes
-import androidx.compose.ui.draganddrop.toAndroidDragEvent
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
@@ -53,24 +47,59 @@ import com.ifthen.app.data.Folder
 import com.ifthen.app.data.Rule
 import com.ifthen.app.ui.RuleStat
 
-val FolderEmojis = listOf("📁", "🌙", "☀️", "💼", "🏋️", "📚", "🍔", "🧘", "✈️", "🌱")
+val FolderEmojis = listOf("📁", "🌙", "☀️", "️", "🏋️", "📚", "🍔", "🧘", "✈️", "🌱")
 val FolderColors = listOf(0xFF1F6E5C, 0xFF2F5DA8, 0xFF6A4FA3, 0xFFB8860B, 0xFF8C4A2F, 0xFF0F7B7B)
 
 @Composable
-fun SectionHeader(title: String, subtitle: String? = null, modifier: Modifier = Modifier) {
-    Column(modifier = modifier.fillMaxWidth().padding(horizontal = 4.dp, vertical = 8.dp)) {
-        Text(
-            text = title,
-            style = MaterialTheme.typography.titleMedium,
-            fontWeight = FontWeight.SemiBold
-        )
-        if (subtitle != null) {
+fun TitleBar(
+    title: String,
+    emoji: String? = null,
+    onBack: (() -> Unit)? = null,
+    action: (@Composable () -> Unit)? = null,
+    modifier: Modifier = Modifier
+) {
+    Row(
+        modifier = modifier.fillMaxWidth().padding(top = 12.dp, bottom = 4.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        if (onBack != null) {
             Text(
-                text = subtitle,
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant
+                "‹",
+                style = MaterialTheme.typography.headlineSmall,
+                color = MaterialTheme.colorScheme.primary,
+                modifier = Modifier
+                    .clip(RoundedCornerShape(8.dp))
+                    .clickable { onBack() }
+                    .padding(horizontal = 10.dp, vertical = 2.dp)
             )
         }
+        Text(
+            text = if (emoji == null) title else "$emoji $title",
+            style = MaterialTheme.typography.headlineMedium,
+            fontWeight = FontWeight.SemiBold,
+            modifier = Modifier.weight(1f)
+        )
+        action?.invoke()
+    }
+}
+
+@Composable
+fun SectionHeader(
+    title: String,
+    action: (@Composable () -> Unit)? = null,
+    modifier: Modifier = Modifier
+) {
+    Row(
+        modifier = modifier.fillMaxWidth().padding(horizontal = 4.dp, vertical = 6.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Text(
+            text = title,
+            style = MaterialTheme.typography.titleSmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier.weight(1f)
+        )
+        action?.invoke()
     }
 }
 
@@ -81,171 +110,171 @@ fun StreakChip(count: Int, modifier: Modifier = Modifier) {
         modifier = modifier
             .clip(RoundedCornerShape(50))
             .background(MaterialTheme.colorScheme.secondaryContainer)
-            .padding(horizontal = 10.dp, vertical = 4.dp),
+            .padding(horizontal = 8.dp, vertical = 3.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
         Icon(
             imageVector = Icons.AutoMirrored.Filled.TrendingUp,
             contentDescription = null,
-            modifier = Modifier.size(14.dp),
+            modifier = Modifier.size(13.dp),
             tint = MaterialTheme.colorScheme.onSecondaryContainer
         )
-        Spacer(Modifier.width(4.dp))
+        Spacer(Modifier.width(3.dp))
         Text(
-            text = "连击 $count",
+            text = "$count",
             style = MaterialTheme.typography.labelMedium,
             color = MaterialTheme.colorScheme.onSecondaryContainer
         )
     }
 }
 
-/**
- * 点=做了；长按=这次没做；把手图标长按拖拽换文件夹。
- */
+/** 高频区用的紧凑药丸：点=做了，长按=没做 */
+@OptIn(ExperimentalFoundationApi::class)
+@Composable
+fun RuleChip(
+    rule: Rule,
+    streak: Int,
+    onClick: () -> Unit,
+    onLongClick: () -> Unit,
+    modifier: Modifier = Modifier
+) {
+    Row(
+        modifier = modifier
+            .clip(RoundedCornerShape(50))
+            .background(MaterialTheme.colorScheme.primaryContainer)
+            .combinedClickable(onClick = onClick, onLongClick = onLongClick)
+            .padding(horizontal = 14.dp, vertical = 10.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Text(
+            rule.ifText,
+            style = MaterialTheme.typography.labelLarge,
+            color = MaterialTheme.colorScheme.onPrimaryContainer
+        )
+        if (streak > 0) {
+            Spacer(Modifier.width(6.dp))
+            Text(
+                "🔥$streak",
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onPrimaryContainer
+            )
+        }
+    }
+}
+
+/** 点=做了；长按=这次没做；把手长按可拖到文件夹 */
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
 fun RuleCard(
     rule: Rule,
     stat: RuleStat,
-    emphasized: Boolean = false,
-    dragSource: Modifier = Modifier,
+    dragHandleModifier: Modifier = Modifier,
     onClick: () -> Unit,
     onLongClick: () -> Unit,
     onEdit: () -> Unit,
     modifier: Modifier = Modifier
 ) {
-    val colors = if (emphasized) {
-        CardDefaults.cardColors(
-            containerColor = MaterialTheme.colorScheme.primaryContainer,
-            contentColor = MaterialTheme.colorScheme.onPrimaryContainer
-        )
-    } else {
-        CardDefaults.cardColors(
-            containerColor = MaterialTheme.colorScheme.surfaceVariant,
-            contentColor = MaterialTheme.colorScheme.onSurfaceVariant
-        )
-    }
     Card(
         modifier = modifier.fillMaxWidth(),
-        shape = RoundedCornerShape(16.dp),
-        colors = colors
+        shape = RoundedCornerShape(14.dp),
+        colors = CardDefaults.cardColors(
+            containerColor = MaterialTheme.colorScheme.surfaceVariant
+        )
     ) {
-        Column(
+        Row(
             modifier = Modifier
                 .combinedClickable(onClick = onClick, onLongClick = onLongClick)
-                .padding(start = 16.dp, end = 8.dp, top = 12.dp, bottom = 16.dp)
+                .padding(start = 14.dp, end = 4.dp, top = 12.dp, bottom = 12.dp),
+            verticalAlignment = Alignment.CenterVertically
         ) {
-            Row(verticalAlignment = Alignment.CenterVertically) {
+            Column(Modifier.weight(1f)) {
                 Text(
-                    text = "如果 " + rule.ifText,
-                    style = MaterialTheme.typography.titleMedium,
-                    fontWeight = FontWeight.Medium,
-                    color = if (emphasized) MaterialTheme.colorScheme.onPrimaryContainer
-                    else MaterialTheme.colorScheme.onSurface,
-                    modifier = Modifier.weight(1f)
+                    text = rule.ifText,
+                    style = MaterialTheme.typography.bodyLarge,
+                    color = MaterialTheme.colorScheme.onSurface
                 )
-                Icon(
-                    imageVector = Icons.Filled.DragHandle,
-                    contentDescription = "长按拖到文件夹里",
-                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                    modifier = Modifier
-                        .size(30.dp)
-                        .then(dragSource)
-                )
-                Text(
-                    text = "编辑",
-                    style = MaterialTheme.typography.labelMedium,
-                    color = MaterialTheme.colorScheme.primary,
-                    modifier = Modifier
-                        .clip(RoundedCornerShape(8.dp))
-                        .combinedClickable(onClick = onEdit, onLongClick = null)
-                        .padding(horizontal = 8.dp, vertical = 4.dp)
-                )
+                Spacer(Modifier.height(2.dp))
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text(
+                        text = "→ ${rule.thenText}",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.weight(1f, fill = false)
+                    )
+                    StreakChip(stat.streak)
+                }
             }
-            Spacer(Modifier.height(6.dp))
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Text(
-                    text = "→ " + rule.thenText,
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = if (emphasized) MaterialTheme.colorScheme.onPrimaryContainer
-                    else MaterialTheme.colorScheme.onSurfaceVariant,
-                    modifier = Modifier.weight(1f)
-                )
-                StreakChip(stat.streak)
-            }
+            Icon(
+                imageVector = Icons.Filled.Edit,
+                contentDescription = "编辑",
+                tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f),
+                modifier = Modifier
+                    .clip(RoundedCornerShape(8.dp))
+                    .clickable { onEdit() }
+                    .padding(6.dp)
+                    .size(16.dp)
+            )
+            Icon(
+                imageVector = Icons.Filled.DragIndicator,
+                contentDescription = "长按拖到文件夹",
+                tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f),
+                modifier = Modifier
+                    .padding(end = 4.dp)
+                    .size(22.dp)
+                    .then(dragHandleModifier)
+            )
         }
     }
 }
 
+/** 细行式文件夹条目：点=进入，长按=管理，可作拖拽落点 */
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
-fun FolderCard(
+fun FolderRow(
     folder: Folder,
     ruleCount: Int,
-    onOpen: () -> Unit,
-    onManage: () -> Unit,
-    onDropped: (ruleId: Long) -> Unit,
+    hovered: Boolean,
+    onClick: () -> Unit,
+    onLongClick: () -> Unit,
     modifier: Modifier = Modifier
 ) {
-    var dragOver by remember { mutableStateOf(false) }
     val accent = Color(folder.color)
-    val target = remember {
-        object : DragAndDropTarget {
-            override fun onEntered(event: DragAndDropEvent) { dragOver = true }
-            override fun onExited(event: DragAndDropEvent) { dragOver = false }
-            override fun onEnded(event: DragAndDropEvent) { dragOver = false }
-            override fun onDrop(event: DragAndDropEvent): Boolean {
-                dragOver = false
-                val text = event.toAndroidDragEvent().clipData?.getItemAt(0)?.text?.toString()
-                val id = text?.removePrefix("ifthen-rule:")?.toLongOrNull() ?: return false
-                onDropped(id)
-                return true
-            }
-        }
-    }
     Card(
-        modifier = modifier
-            .fillMaxWidth()
-            .dragAndDropTarget(
-                shouldStartDragAndDrop = { startEvent ->
-                    startEvent.mimeTypes().contains(ClipDescription.MIMETYPE_TEXT_PLAIN)
-                },
-                target = target
-            ),
-        shape = RoundedCornerShape(16.dp),
+        modifier = modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(14.dp),
         colors = CardDefaults.cardColors(
-            containerColor = if (dragOver) accent.copy(alpha = 0.35f)
-            else accent.copy(alpha = 0.10f)
+            containerColor = if (hovered) accent.copy(alpha = 0.30f) else accent.copy(alpha = 0.10f)
         ),
-        border = if (dragOver) BorderStroke(2.dp, accent) else null
+        border = if (hovered) BorderStroke(2.dp, accent) else null
     ) {
         Row(
             modifier = Modifier
-                .combinedClickable(onClick = onOpen, onLongClick = onManage)
-                .padding(16.dp)
-                .fillMaxWidth(),
+                .combinedClickable(onClick = onClick, onLongClick = onLongClick)
+                .padding(horizontal = 14.dp, vertical = 12.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
-            Text(folder.emoji, style = MaterialTheme.typography.headlineSmall)
-            Spacer(Modifier.width(12.dp))
-            Column(Modifier.weight(1f)) {
+            Text(folder.emoji, style = MaterialTheme.typography.titleLarge)
+            Spacer(Modifier.width(10.dp))
+            Text(
+                folder.name,
+                style = MaterialTheme.typography.bodyLarge,
+                fontWeight = FontWeight.Medium,
+                color = MaterialTheme.colorScheme.onSurface,
+                modifier = Modifier.weight(1f)
+            )
+            if (ruleCount > 0) {
                 Text(
-                    folder.name,
-                    style = MaterialTheme.typography.titleMedium,
-                    fontWeight = FontWeight.SemiBold,
-                    color = MaterialTheme.colorScheme.onSurface
-                )
-                Text(
-                    "$ruleCount 条预案 · 长按管理",
-                    style = MaterialTheme.typography.bodySmall,
+                    "$ruleCount",
+                    style = MaterialTheme.typography.labelMedium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
+                Spacer(Modifier.width(6.dp))
             }
-            Box(
-                Modifier
-                    .size(10.dp)
-                    .clip(CircleShape)
-                    .background(accent)
+            Icon(
+                imageVector = Icons.AutoMirrored.Filled.KeyboardArrowRight,
+                contentDescription = null,
+                tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.size(18.dp)
             )
         }
     }
@@ -323,48 +352,6 @@ fun FolderEditorDialog(
         },
         dismissButton = { TextButton(onClick = onDismiss) { Text("取消") } }
     )
-}
-
-@Composable
-fun Breadcrumbs(
-    crumbs: List<Folder>,
-    onRoot: () -> Unit,
-    onCrumb: (Long) -> Unit,
-    modifier: Modifier = Modifier
-) {
-    Row(
-        modifier = modifier.fillMaxWidth().padding(vertical = 4.dp),
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(4.dp)
-    ) {
-        Text(
-            "全部",
-            style = MaterialTheme.typography.labelLarge,
-            color = if (crumbs.isEmpty()) MaterialTheme.colorScheme.onSurface
-            else MaterialTheme.colorScheme.primary,
-            modifier = Modifier
-                .clip(RoundedCornerShape(6.dp))
-                .clickable(enabled = crumbs.isNotEmpty()) { onRoot() }
-                .padding(4.dp)
-        )
-        crumbs.forEachIndexed { i, f ->
-            Text(
-                "›",
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                style = MaterialTheme.typography.labelLarge
-            )
-            Text(
-                "${f.emoji}${f.name}",
-                style = MaterialTheme.typography.labelLarge,
-                color = if (i == crumbs.lastIndex) MaterialTheme.colorScheme.onSurface
-                else MaterialTheme.colorScheme.primary,
-                modifier = Modifier
-                    .clip(RoundedCornerShape(6.dp))
-                    .clickable(enabled = i != crumbs.lastIndex) { onCrumb(f.id) }
-                    .padding(4.dp)
-            )
-        }
-    }
 }
 
 @Composable

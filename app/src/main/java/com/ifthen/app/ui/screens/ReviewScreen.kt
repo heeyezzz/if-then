@@ -63,14 +63,12 @@ fun ReviewScreen(
             }
 
             item {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    SectionHeader(
-                        title = "今日流水",
-                        subtitle = "睡前把「待定」补记完",
-                        modifier = Modifier.weight(1f)
-                    )
-                    TextButton(onClick = { showPickRule = true }) { Text("补记触发") }
-                }
+                SectionHeader(
+                    title = "今日流水",
+                    action = {
+                        TextButton(onClick = { showPickRule = true }) { Text("补记触发") }
+                    }
+                )
             }
             if (state.todayLogs.isEmpty()) {
                 item {
@@ -87,11 +85,11 @@ fun ReviewScreen(
                 )
             }
 
-            item { SectionHeader(title = "最近 30 天", subtitle = "颜色越深，当天顶住的次数越多") }
+            item { SectionHeader("最近 30 天") }
             item { Card(Modifier.fillMaxWidth()) { Heatmap(state.heatmap, Modifier.padding(12.dp)) } }
 
             if (state.zombies.isNotEmpty()) {
-                item { SectionHeader(title = "僵尸预案", subtitle = "两周以上没触发过，考虑归档") }
+                item { SectionHeader("僵尸预案") }
                 items(state.zombies, key = { "z${it.id}" }) { rule ->
                     ZombieRow(rule.ifText, rule.thenText, onArchive = { vm.setArchived(rule, true) },
                         onEdit = { onEdit(rule.id) })
@@ -99,14 +97,14 @@ fun ReviewScreen(
             }
 
             if (state.highTriggers.isNotEmpty()) {
-                item { SectionHeader(title = "最常触发", subtitle = "这些场景是真实存在的战场") }
+                item { SectionHeader("最常触发") }
                 items(state.highTriggers, key = { "h${it.id}" }) { rule ->
                     val s = state.stats[rule.id] ?: RuleStat()
                     StatRow(rule.ifText, "30天触发 ${s.triggers30} 次 · 执行率 ${rateText(s)}", s.streak)
                 }
             }
 
-            item { SectionHeader(title = "全部战绩", subtitle = "按文件夹分节，先看哪个领域在失守") }
+            item { SectionHeader("全部战绩") }
             state.folderSummaries.forEach { s ->
                 item(key = "fs${s.folder.id}") {
                     Row(
