@@ -1,5 +1,6 @@
 package com.ifthen.app.ui.screens
 
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -45,6 +46,8 @@ import com.ifthen.app.ui.AppViewModel
 fun RuleEditScreen(
     vm: AppViewModel,
     ruleId: Long,
+    defaultFolderId: Long?,
+    state: com.ifthen.app.ui.AppUiState,
     onDone: () -> Unit,
     onToast: (String) -> Unit,
     modifier: Modifier = Modifier
@@ -54,6 +57,8 @@ fun RuleEditScreen(
     var tags by rememberSaveable { mutableStateOf("") }
     var loaded by rememberSaveable { mutableStateOf(false) }
     var showDelete by rememberSaveable { mutableStateOf(false) }
+    var showFolderPicker by remember { mutableStateOf(false) }
+    var folderId by remember { mutableStateOf(if (ruleId > 0) null else defaultFolderId) }
     var current by remember { mutableStateOf<Rule?>(null) }
 
     var concern by rememberSaveable { mutableStateOf("") }
@@ -70,6 +75,7 @@ fun RuleEditScreen(
                 ifText = it.ifText
                 thenText = it.thenText
                 tags = it.tags
+                folderId = it.folderId
             }
         }
         loaded = true
@@ -101,13 +107,30 @@ fun RuleEditScreen(
                 modifier = Modifier.fillMaxWidth(),
                 minLines = 2
             )
-            OutlinedTextField(
-                value = tags,
-                onValueChange = { tags = it },
-                label = { Text("标签（可选，逗号分隔）") },
-                modifier = Modifier.fillMaxWidth(),
-                singleLine = true
-            )
+            Card(
+                colors = CardDefaults.cardColors(
+                    containerColor = MaterialTheme.colorScheme.surfaceVariant
+                ),
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Row(
+                    Modifier.clickable { showFolderPicker = true }
+                        .padding(horizontal = 16.dp, vertical = 14.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Column(Modifier.weight(1f)) {
+                        Text("所在文件夹", style = MaterialTheme.typography.labelLarge)
+                        val f = state.folders.firstOrNull { it.id == folderId }
+                        Text(
+                            if (f == null) "根目录" else "${f.emoji}${f.name}",
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                    Text("更换 ›", style = MaterialTheme.typography.labelMedium,
+                        color = MaterialTheme.colorScheme.primary)
+                }
+            }
             Button(
                 onClick = {
                     if (ifText.isBlank() || thenText.isBlank()) {
@@ -122,6 +145,7 @@ fun RuleEditScreen(
                             thenText = thenText.trim(),
                             tags = tags.trim(),
                             triggerConfig = base?.triggerConfig,
+                            folderId = folderId,
                             status = base?.status ?: RuleStatus.ACTIVE.name,
                             createdAt = base?.createdAt ?: System.currentTimeMillis()
                         )
@@ -216,7 +240,7 @@ fun RuleEditScreen(
                             enabled = checked.values.count { it } > 0,
                             onClick = {
                                 val picked = candidates.filterIndexed { i, _ -> checked[i] == true }
-                                vm.addCandidates(picked)
+                                vm.addCandidates(picked, folderId)
                                 candidates.clear()
                                 checked.clear()
                                 onToast("已入库 ${picked.size} 条")
@@ -227,6 +251,44 @@ fun RuleEditScreen(
             }
             Spacer(Modifier.height(60.dp))
         }
+    }
+
+    if (showFolderPicker) {
+        val rows = ArrayList<Pair<Int, com.ifthen.app.data.Folder?>>()
+        rows.add(0 to null)
+        val childrenOf = state.folders.groupBy { it.parentId }
+        fun walk(parentId: Long?, depth: Int) {
+            childrenOf[parentId].orEmpty().forEach { f ->
+                rows.add(depth to f)
+                walk(f.id, depth + 1)
+            }
+        }
+        walk(null, 1)
+        AlertDialog(
+            onDismissRequest = { showFolderPicker = false },
+            title = { Text("移到哪个文件夹？") },
+            text = {
+                Column {
+                    rows.forEach { (depth, f) ->
+                        TextButton(
+                            onClick = { folderId = f?.id; showFolderPicker = false },
+                            modifier = Modifier.fillMaxWidth(),
+                            contentPadding = androidx.compose.foundation.layout.PaddingValues(
+                                start = (8 + depth * 20).dp
+                            )
+                        ) {
+                            Text(
+                                if (f == null) "根目录" else "${f.emoji}${f.name}",
+                                modifier = Modifier.fillMaxWidth(),
+                                textAlign = androidx.compose.ui.text.style.TextAlign.Start
+                            )
+                        }
+                    }
+                }
+            },
+            confirmButton = {},
+            dismissButton = { TextButton(onClick = { showFolderPicker = false }) { Text("取消") } }
+        )
     }
 
     if (showDelete) {

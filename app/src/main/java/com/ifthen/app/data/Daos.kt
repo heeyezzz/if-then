@@ -28,6 +28,12 @@ interface RuleDao {
     @Query("DELETE FROM rules")
     suspend fun deleteAll()
 
+    @Query("SELECT * FROM rules WHERE folderId IN (:folderIds)")
+    suspend fun rulesInFolders(folderIds: List<Long>): List<Rule>
+
+    @Query("DELETE FROM rules WHERE id IN (:ids)")
+    suspend fun deleteByIds(ids: List<Long>)
+
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insertAll(rules: List<Rule>)
 }
@@ -58,8 +64,32 @@ interface ExecLogDao {
     @Query("DELETE FROM exec_logs")
     suspend fun deleteAll()
 
+    @Query("DELETE FROM exec_logs WHERE ruleId IN (:ruleIds)")
+    suspend fun deleteForRules(ruleIds: List<Long>)
+
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insertAll(logs: List<ExecLog>)
 }
 
 data class RuleTriggerCount(val ruleId: Long, val cnt: Int)
+
+@Dao
+interface FolderDao {
+    @Query("SELECT * FROM folders ORDER BY createdAt ASC")
+    fun observeAll(): Flow<List<Folder>>
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun upsert(folder: Folder): Long
+
+    @Update
+    suspend fun update(folder: Folder)
+
+    @Query("DELETE FROM folders WHERE id = :id")
+    suspend fun deleteById(id: Long)
+
+    @Query("DELETE FROM folders")
+    suspend fun deleteAll()
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun insertAll(folders: List<Folder>)
+}

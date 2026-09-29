@@ -106,10 +106,58 @@ fun ReviewScreen(
                 }
             }
 
-            item { SectionHeader(title = "全部战绩") }
-            items(state.activeRules, key = { "s${it.id}" }) { rule ->
-                val s = state.stats[rule.id] ?: RuleStat()
-                StatRow(rule.ifText, "30天触发 ${s.triggers30} · 执行率 ${rateText(s)}", s.streak)
+            item { SectionHeader(title = "全部战绩", subtitle = "按文件夹分节，先看哪个领域在失守") }
+            state.folderSummaries.forEach { s ->
+                item(key = "fs${s.folder.id}") {
+                    Row(
+                        Modifier.padding(start = (s.depth * 16).dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(
+                            "${s.folder.emoji}${s.folder.name}",
+                            style = MaterialTheme.typography.titleSmall,
+                            modifier = Modifier.weight(1f)
+                        )
+                        Text(
+                            "触发 ${s.triggers30} · 执行率 " +
+                                if (s.triggers30 == 0) "—" else "${s.done30 * 100 / s.triggers30}%",
+                            style = MaterialTheme.typography.labelMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                }
+                state.activeRules.filter { it.folderId == s.folder.id }.forEach { rule ->
+                    item(key = "s${rule.id}") {
+                        val st = state.stats[rule.id] ?: RuleStat()
+                        StatRow(
+                            "  ${rule.ifText}",
+                            "30天触发 ${st.triggers30} · 执行率 ${rateText(st)}",
+                            st.streak
+                        )
+                    }
+                }
+            }
+            run {
+                val rootRules = state.activeRules.filter { it.folderId == null }
+                if (rootRules.isNotEmpty() || state.folderSummaries.isNotEmpty()) {
+                    item(key = "fsroot") {
+                        Text(
+                            "🗂 根目录",
+                            style = MaterialTheme.typography.titleSmall,
+                            modifier = Modifier.padding(top = 8.dp)
+                        )
+                    }
+                    rootRules.forEach { rule ->
+                        item(key = "s${rule.id}") {
+                            val st = state.stats[rule.id] ?: RuleStat()
+                            StatRow(
+                                "  ${rule.ifText}",
+                                "30天触发 ${st.triggers30} · 执行率 ${rateText(st)}",
+                                st.streak
+                            )
+                        }
+                    }
+                }
             }
 
             if (state.archivedRules.isNotEmpty()) {

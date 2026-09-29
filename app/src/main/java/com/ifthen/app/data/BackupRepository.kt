@@ -8,8 +8,9 @@ import kotlinx.serialization.json.Json
 
 @Serializable
 data class BackupPayload(
-    val version: Int = 1,
+    val version: Int = 2,
     val exportedAt: Long = System.currentTimeMillis(),
+    val folders: List<Folder> = emptyList(),
     val rules: List<Rule>,
     val logs: List<ExecLog>
 )
@@ -23,6 +24,7 @@ class BackupRepository(private val context: Context) {
     suspend fun exportTo(uri: Uri): Int {
         val db = AppDatabase.get(context)
         val payload = BackupPayload(
+            folders = db.folderDao().observeAll().first(),
             rules = db.ruleDao().observeAll().first(),
             logs = db.execLogDao().observeSince(0L).first()
         )
@@ -40,6 +42,8 @@ class BackupRepository(private val context: Context) {
         val db = AppDatabase.get(context)
         db.execLogDao().deleteAll()
         db.ruleDao().deleteAll()
+        db.folderDao().deleteAll()
+        db.folderDao().insertAll(payload.folders)
         db.ruleDao().insertAll(payload.rules)
         db.execLogDao().insertAll(payload.logs)
         return payload.rules.size

@@ -125,6 +125,8 @@ private fun AppRoot() {
                 RuleEditScreen(
                     vm = vm,
                     ruleId = ruleId,
+                    defaultFolderId = state.currentFolderId,
+                    state = state,
                     onDone = { navController.popBackStack() },
                     onToast = toast
                 )
