@@ -35,6 +35,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.draw.scale
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Rect
@@ -71,6 +72,8 @@ private class DragState {
     var size by mutableStateOf(IntSize.Zero)
     val folderBounds = mutableStateMapOf<Long, Rect>()
     var rootBounds by mutableStateOf<Rect?>(null)
+    var previewGroup by mutableStateOf<Long?>(null)
+    var previewOrder by mutableStateOf<List<Long>?>(null)
 
     val rootHovered: Boolean
         get() = ruleId != null && rootBounds?.contains(pos) == true
@@ -78,6 +81,12 @@ private class DragState {
     val hoverFolderId: Long?
         get() = if (ruleId == null) null
         else folderBounds.entries.firstOrNull { it.value.contains(pos) }?.key
+}
+
+private fun orderFor(levelFolderId: Long?, natural: List<Rule>, drag: DragState): List<Rule> {
+    val order = drag.previewOrder ?: return natural
+    if (drag.previewGroup != levelFolderId) return natural
+    return order.mapNotNull { id -> natural.firstOrNull { it.id == id } }
 }
 
 @Composable
@@ -100,12 +109,30 @@ fun HomeScreen(
     var ruleToDelete by remember { mutableStateOf<Rule?>(null) }
 
     val inFolder = state.currentFolderId != null
+    val lineColor = MaterialTheme.colorScheme.primary
     val density = LocalDensity.current
     val screenWidthPx = with(density) { LocalConfiguration.current.screenWidthDp.dp.toPx() }
 
     @Composable
-    fun RuleRow(rule: Rule, indented: Boolean, itemModifier: Modifier = Modifier) {
+    fun RuleRow(
+        rule: Rule,
+        indented: Boolean,
+        itemModifier: Modifier = Modifier,
+        isDragged: Boolean = false
+    ) {
         val handlePos = remember { mutableStateOf(Offset.Zero) }
+        val lineHeight = with(density) { 5.dp.toPx() }
+        val slotModifier = itemModifier
+            .alpha(if (isDragged) 0f else 1f)
+            .drawBehind {
+                if (isDragged) {
+                    drawRect(
+                        color = lineColor,
+                        topLeft = Offset(0f, 0f),
+                        size = androidx.compose.ui.geometry.Size(size.width, lineHeight)
+                    )
+                }
+            }
         SwipeRuleCard(
             rule = rule,
             stat = state.stats[rule.id] ?: RuleStat(),
@@ -114,7 +141,7 @@ fun HomeScreen(
             dragging = drag.ruleId == rule.id,
             swipeEnabled = drag.ruleId == null,
             modifier = if (indented) Modifier.padding(start = 18.dp) else Modifier,
-            cardModifier = itemModifier
+            cardModifier = slotModifier
                 .onGloballyPositioned { coords -> cardRects[rule.id] = coords.boundsInWindow() },
             dragHandleModifier = Modifier
                 .onGloballyPositioned { handlePos.value = it.positionInWindow() }
@@ -124,6 +151,8 @@ fun HomeScreen(
                             val cardRect = cardRects[rule.id]
                             val finger = handlePos.value + off
                             drag.ruleId = rule.id
+                            drag.previewGroup = rule.folderId
+                            drag.previewOrder = null
                             drag.ruleText = rule.ifText
                             drag.ruleThen = rule.thenText
                             drag.streak = state.stats[rule.id]?.streak ?: 0
@@ -136,12 +165,26 @@ fun HomeScreen(
                         onDrag = { change, amount ->
                             change.consume()
                             drag.pos += amount
+                            val dragged = drag.ruleId
+                            if (dragged != null) {
+                                val others = state.activeRules
+                                    .filter { it.folderId == drag.previewGroup && it.id != dragged }
+                                val idx = others.count { r ->
+                                    (cardRects[r.id]?.center?.y ?: 0f) < drag.pos.y
+                                }
+                                val ids = others.map { it.id }.toMutableList()
+                                ids.add(idx.coerceIn(0, ids.size), dragged)
+                                drag.previewOrder = ids
+                            }
                         },
                         onDragEnd = {
                             val toRoot = drag.rootHovered
                             val target = drag.hoverFolderId
                             val id = drag.ruleId
+                            val order = drag.previewOrder
                             drag.ruleId = null
+                            drag.previewOrder = null
+                            drag.previewGroup = null
                             if (id != null) {
                                 when {
                                     toRoot -> {
@@ -153,10 +196,15 @@ fun HomeScreen(
                                         val f = state.folders.firstOrNull { it.id == target }
                                         onRecord("已挪进 ${f?.emoji ?: ""}${f?.name ?: ""}")
                                     }
+                                    order != null -> vm.reorderLevel(order)
                                 }
                             }
                         },
-                        onDragCancel = { drag.ruleId = null }
+                        onDragCancel = {
+                            drag.ruleId = null
+                            drag.previewOrder = null
+                            drag.previewGroup = null
+                        }
                     )
                 },
             onDone = {
@@ -282,9 +330,15 @@ fun HomeScreen(
                                 )
                             }
                         } else {
-                            children.forEach { child ->
+                            val orderedChildren = orderFor(folder.id, children, drag)
+                            orderedChildren.forEach { child ->
                                 item(key = "n${child.id}") {
-                                    RuleRow(child, indented = true, itemModifier = Modifier.animateItem())
+                                    RuleRow(
+                                        child,
+                                        indented = true,
+                                        itemModifier = Modifier.animateItem(),
+                                        isDragged = drag.previewOrder != null && drag.ruleId == child.id
+                                    )
                                 }
                             }
                         }
@@ -295,8 +349,14 @@ fun HomeScreen(
             val rules = state.visibleRules
             if (rules.isNotEmpty()) {
                 item { SectionHeader("预案") }
-                items(rules, key = { "a${it.id}" }) { rule ->
-                    RuleRow(rule, indented = false, itemModifier = Modifier.animateItem())
+                val ordered = orderFor(state.currentFolderId, rules, drag)
+                items(ordered, key = { "a${it.id}" }) { rule ->
+                    RuleRow(
+                        rule,
+                        indented = false,
+                        itemModifier = Modifier.animateItem(),
+                        isDragged = drag.previewOrder != null && drag.ruleId == rule.id
+                    )
                 }
             } else if (state.visibleFolders.isEmpty() && frequentRules.isEmpty()) {
                 item {
@@ -324,7 +384,7 @@ fun HomeScreen(
                         val maxX = (screenWidthPx - ghostWidthPx).coerceAtLeast(0f)
                         IntOffset(
                             (drag.pos.x - ghostWidthPx / 2f).coerceIn(0f, maxX).toInt(),
-                            (drag.pos.y - ghostHeightPx / 2f).toInt()
+                            (drag.pos.y - ghostHeightPx).toInt()
                         )
                     }
                     .scale(1.03f)

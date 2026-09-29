@@ -235,7 +235,10 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     // ---- 预案动作 ----
 
     fun saveRule(rule: Rule, onSaved: (Long) -> Unit = {}) = viewModelScope.launch(Dispatchers.IO) {
-        val id = db.ruleDao().upsert(rule)
+        val toSave = if (rule.id == 0L) {
+            rule.copy(sortOrder = db.ruleDao().maxSortOrder(rule.folderId) + 1)
+        } else rule
+        val id = db.ruleDao().upsert(toSave)
         kotlinx.coroutines.withContext(Dispatchers.Main) { onSaved(if (rule.id != 0L) rule.id else id) }
     }
 
@@ -252,12 +255,27 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     fun moveRule(ruleId: Long, folderId: Long?) = viewModelScope.launch(Dispatchers.IO) {
-        db.ruleDao().getById(ruleId)?.let { db.ruleDao().update(it.copy(folderId = folderId)) }
+        db.ruleDao().getById(ruleId)?.let {
+            db.ruleDao().update(
+                it.copy(
+                    folderId = folderId,
+                    sortOrder = db.ruleDao().maxSortOrder(folderId) + 1
+                )
+            )
+        }
+    }
+
+    /** 同层重排：按给定顺序写入 sortOrder */
+    fun reorderLevel(orderedIds: List<Long>) = viewModelScope.launch(Dispatchers.IO) {
+        orderedIds.forEachIndexed { index, id -> db.ruleDao().updateSortOrder(id, index) }
     }
 
     fun addCandidates(candidates: List<AiCandidate>, folderId: Long?) = viewModelScope.launch(Dispatchers.IO) {
+        var order = db.ruleDao().maxSortOrder(folderId) + 1
         candidates.forEach { c ->
-            db.ruleDao().upsert(Rule(ifText = c.ifText, thenText = c.thenText, folderId = folderId))
+            db.ruleDao().upsert(
+                Rule(ifText = c.ifText, thenText = c.thenText, folderId = folderId, sortOrder = order++)
+            )
         }
     }
 

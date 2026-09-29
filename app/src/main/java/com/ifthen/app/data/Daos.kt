@@ -10,7 +10,7 @@ import kotlinx.coroutines.flow.Flow
 
 @Dao
 interface RuleDao {
-    @Query("SELECT * FROM rules ORDER BY createdAt DESC")
+    @Query("SELECT * FROM rules ORDER BY sortOrder ASC, createdAt DESC")
     fun observeAll(): Flow<List<Rule>>
 
     @Query("SELECT * FROM rules WHERE id = :id")
@@ -36,6 +36,12 @@ interface RuleDao {
 
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insertAll(rules: List<Rule>)
+
+    @Query("UPDATE rules SET sortOrder = :order WHERE id = :id")
+    suspend fun updateSortOrder(id: Long, order: Int)
+
+    @Query("SELECT COALESCE(MAX(sortOrder), -1) FROM rules WHERE folderId IS :folderId")
+    suspend fun maxSortOrder(folderId: Long?): Int
 }
 
 @Dao
