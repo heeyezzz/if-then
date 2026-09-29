@@ -1,52 +1,33 @@
 package com.ifthen.app.ui.screens
 
-import androidx.compose.foundation.background
-import androidx.compose.foundation.gestures.detectDragGesturesAfterLongPress
+import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
-import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
-import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.material3.AlertDialog
-import androidx.compose.material3.Card
-import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
-import androidx.compose.ui.Alignment
+import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.alpha
-import androidx.compose.ui.draw.clip
-import androidx.compose.ui.draw.drawBehind
-import androidx.compose.ui.draw.scale
-import androidx.compose.ui.geometry.Offset
-import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.input.pointer.pointerInput
-import androidx.compose.ui.layout.boundsInWindow
-import androidx.compose.ui.layout.onGloballyPositioned
-import androidx.compose.ui.layout.positionInWindow
-import androidx.compose.ui.platform.LocalConfiguration
-import androidx.compose.ui.platform.LocalDensity
-import androidx.compose.ui.unit.IntOffset
-import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
 import com.ifthen.app.data.Folder
 import com.ifthen.app.data.Rule
@@ -58,38 +39,9 @@ import com.ifthen.app.ui.components.FolderEditorDialog
 import com.ifthen.app.ui.components.FolderRow
 import com.ifthen.app.ui.components.RuleChip
 import com.ifthen.app.ui.components.SectionHeader
-import com.ifthen.app.ui.components.StreakChip
 import com.ifthen.app.ui.components.SwipeRuleCard
 import com.ifthen.app.ui.components.TitleBar
 import kotlinx.coroutines.launch
-
-private class DragState {
-    var ruleId by mutableStateOf<Long?>(null)
-    var ruleText by mutableStateOf("")
-    var ruleThen by mutableStateOf("")
-    var streak by mutableStateOf(0)
-    var pos by mutableStateOf(Offset.Zero)
-    var size by mutableStateOf(IntSize.Zero)
-    val folderBounds = mutableStateMapOf<Long, Rect>()
-    var rootBounds by mutableStateOf<Rect?>(null)
-    var previewGroup by mutableStateOf<Long?>(null)
-    var previewOrder by mutableStateOf<List<Long>?>(null)
-    var itemKey by mutableStateOf<String?>(null)
-    var cardLeft by mutableStateOf(0f)
-
-    val rootHovered: Boolean
-        get() = ruleId != null && rootBounds?.contains(pos) == true
-
-    val hoverFolderId: Long?
-        get() = if (ruleId == null) null
-        else folderBounds.entries.firstOrNull { it.value.contains(pos) }?.key
-}
-
-private fun orderFor(levelFolderId: Long?, natural: List<Rule>, drag: DragState): List<Rule> {
-    val order = drag.previewOrder ?: return natural
-    if (drag.previewGroup != levelFolderId) return natural
-    return order.mapNotNull { id -> natural.firstOrNull { it.id == id } }
-}
 
 @Composable
 fun HomeScreen(
@@ -100,8 +52,7 @@ fun HomeScreen(
     modifier: Modifier = Modifier
 ) {
     val scope = rememberCoroutineScope()
-    val drag = remember { DragState() }
-    val cardRects = remember { mutableStateMapOf<Long, Rect>() }
+    val listState = rememberLazyListState()
     var revealedId by remember { mutableStateOf<Long?>(null) }
     var expandedFolders by remember { mutableStateOf(setOf<Long>()) }
     var creatingFolder by remember { mutableStateOf(false) }
@@ -109,125 +60,59 @@ fun HomeScreen(
     var pendingDelete by remember { mutableStateOf<Folder?>(null) }
     var deleteImpact by remember { mutableStateOf<Pair<Int, Int>?>(null) }
     var ruleToDelete by remember { mutableStateOf<Rule?>(null) }
+    var movingRule by remember { mutableStateOf<Rule?>(null) }
 
     val inFolder = state.currentFolderId != null
-    val lineColor = MaterialTheme.colorScheme.primary
-    val density = LocalDensity.current
-    val screenWidthPx = with(density) { LocalConfiguration.current.screenWidthDp.dp.toPx() }
-    val listState = androidx.compose.foundation.lazy.rememberLazyListState()
-    val listTopY = remember { androidx.compose.runtime.mutableFloatStateOf(0f) }
+
+    // 滚动列表时，把展开的卡片归位
+    LaunchedEffect(listState) {
+        snapshotFlow { listState.isScrollInProgress }.collect { scrolling ->
+            if (scrolling) revealedId = null
+        }
+    }
 
     @Composable
-    fun RuleRow(
-        rule: Rule,
-        indented: Boolean,
-        itemKey: String,
-        itemModifier: Modifier = Modifier,
-        isDragged: Boolean = false
-    ) {
-        val handlePos = remember { mutableStateOf(Offset.Zero) }
+    fun RuleRow(rule: Rule, indented: Boolean, itemModifier: Modifier = Modifier) {
         SwipeRuleCard(
             rule = rule,
             stat = state.stats[rule.id] ?: RuleStat(),
             revealedId = revealedId,
             onReveal = { revealedId = it },
-            dragging = drag.ruleId == rule.id,
-            swipeEnabled = drag.ruleId == null,
             modifier = if (indented) Modifier.padding(start = 18.dp) else Modifier,
-            hidden = isDragged,
-            cardModifier = itemModifier
-                .onGloballyPositioned { coords -> cardRects[rule.id] = coords.boundsInWindow() },
-            dragHandleModifier = Modifier
-                .onGloballyPositioned { handlePos.value = it.positionInWindow() }
-                .pointerInput(rule.id) {
-                    detectDragGesturesAfterLongPress(
-                        onDragStart = { off ->
-                            val cardRect = cardRects[rule.id]
-                            val finger = handlePos.value + off
-                            drag.ruleId = rule.id
-                            drag.itemKey = itemKey
-                            drag.cardLeft = cardRects[rule.id]?.left ?: 0f
-                            drag.previewGroup = rule.folderId
-                            drag.previewOrder = null
-                            drag.ruleText = rule.ifText
-                            drag.ruleThen = rule.thenText
-                            drag.streak = state.stats[rule.id]?.streak ?: 0
-                            drag.pos = finger
-                            drag.size = IntSize(
-                                cardRect?.width?.toInt() ?: 0,
-                                cardRect?.height?.toInt() ?: 0
-                            )
-                        },
-                        onDrag = { change, amount ->
-                            change.consume()
-                            drag.pos += amount
-                            val dragged = drag.ruleId
-                            if (dragged != null) {
-                                val others = state.activeRules
-                                    .filter { it.folderId == drag.previewGroup && it.id != dragged }
-                                val idx = others.count { r ->
-                                    (cardRects[r.id]?.center?.y ?: 0f) < drag.pos.y
-                                }
-                                val ids = others.map { it.id }.toMutableList()
-                                ids.add(idx.coerceIn(0, ids.size), dragged)
-                                drag.previewOrder = ids
-                            }
-                        },
-                        onDragEnd = {
-                            val toRoot = drag.rootHovered
-                            val target = drag.hoverFolderId
-                            val id = drag.ruleId
-                            val order = drag.previewOrder
-                            drag.ruleId = null
-                            drag.previewOrder = null
-                            drag.previewGroup = null
-                            if (id != null) {
-                                when {
-                                    toRoot -> {
-                                        vm.moveRule(id, null)
-                                        onRecord("已移出到根目录")
-                                    }
-                                    target != null -> {
-                                        vm.moveRule(id, target)
-                                        val f = state.folders.firstOrNull { it.id == target }
-                                        onRecord("已挪进 ${f?.emoji ?: ""}${f?.name ?: ""}")
-                                    }
-                                    order != null -> vm.reorderLevel(order)
-                                }
-                            }
-                        },
-                        onDragCancel = {
-                            drag.ruleId = null
-                            drag.previewOrder = null
-                            drag.previewGroup = null
-                        }
-                    )
-                },
+            cardModifier = itemModifier,
             onDone = {
                 SuccessChime.play()
                 vm.logDone(rule.id)
-                onRecord("${rule.thenText} ✓")
+                onRecord(rule.thenText + " ✓")
             },
             onMiss = {
                 vm.logNotDone(rule.id)
                 onRecord("记下了：这次没做")
             },
+            onMove = { movingRule = rule },
             onArchive = {
                 vm.setArchived(rule, true)
                 onRecord("已归档")
             },
             onDelete = { ruleToDelete = rule },
-            onOpen = { onEdit(rule.id) }
+            onOpen = {
+                // 有卡片展开时，第一下只负责归位，不跳转
+                if (revealedId != null) revealedId = null else onEdit(rule.id)
+            }
         )
     }
 
-    Box(modifier = modifier.fillMaxSize()) {
+    Box(
+        modifier = modifier
+            .fillMaxSize()
+            .pointerInput(Unit) { detectTapGestures(onTap = { revealedId = null }) }
+    ) {
         LazyColumn(
             state = listState,
             modifier = Modifier
                 .fillMaxSize()
                 .padding(horizontal = 16.dp)
-                .onGloballyPositioned { listTopY.floatValue = it.positionInWindow().y },
+                .pointerInput(Unit) { detectTapGestures(onTap = { revealedId = null }) },
             verticalArrangement = Arrangement.spacedBy(8.dp)
         ) {
             item {
@@ -244,31 +129,6 @@ fun HomeScreen(
                 )
             }
 
-            if (inFolder && drag.ruleId != null) {
-                item(key = "rootdrop") {
-                    val hovered = drag.rootHovered
-                    Box(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .clip(RoundedCornerShape(14.dp))
-                            .background(
-                                if (hovered) MaterialTheme.colorScheme.primaryContainer
-                                else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.6f)
-                            )
-                            .onGloballyPositioned { drag.rootBounds = it.boundsInWindow() }
-                            .padding(vertical = 14.dp),
-                        contentAlignment = Alignment.Center
-                    ) {
-                        Text(
-                            "松手移出到根目录",
-                            style = MaterialTheme.typography.bodyMedium,
-                            color = if (hovered) MaterialTheme.colorScheme.onPrimaryContainer
-                            else MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-                    }
-                }
-            }
-
             val frequentRules = state.frequentRuleIds.mapNotNull { state.ruleById[it] }
             if (!inFolder && frequentRules.isNotEmpty()) {
                 item { SectionHeader("今天的现场") }
@@ -277,14 +137,14 @@ fun HomeScreen(
                         horizontalArrangement = Arrangement.spacedBy(8.dp),
                         contentPadding = PaddingValues(vertical = 2.dp)
                     ) {
-                        items(frequentRules, key = { "f${it.id}" }) { rule ->
+                        items(frequentRules, key = { "f" + it.id }) { rule ->
                             RuleChip(
                                 rule = rule,
                                 streak = state.stats[rule.id]?.streak ?: 0,
                                 onClick = {
                                     SuccessChime.play()
                                     vm.logDone(rule.id)
-                                    onRecord("${rule.thenText} ✓")
+                                    onRecord(rule.thenText + " ✓")
                                 },
                                 onLongClick = { onEdit(rule.id) }
                             )
@@ -296,11 +156,11 @@ fun HomeScreen(
             if (state.visibleFolders.isNotEmpty()) {
                 item { SectionHeader(title = if (inFolder) "子文件夹" else "文件夹") }
                 state.visibleFolders.forEach { folder ->
-                    item(key = "d${folder.id}") {
+                    item(key = "d" + folder.id) {
                         FolderRow(
                             folder = folder,
                             ruleCount = state.activeRules.count { it.folderId == folder.id },
-                            hovered = drag.hoverFolderId == folder.id,
+                            hovered = false,
                             expanded = folder.id in expandedFolders,
                             onToggleExpand = {
                                 expandedFolders = if (folder.id in expandedFolders) {
@@ -311,17 +171,13 @@ fun HomeScreen(
                             },
                             onClick = { vm.openFolder(folder.id) },
                             onLongClick = { managingFolder = folder },
-                            modifier = Modifier
-                                .animateItem()
-                                .onGloballyPositioned { coords ->
-                                    drag.folderBounds[folder.id] = coords.boundsInWindow()
-                                }
+                            modifier = Modifier.animateItem()
                         )
                     }
                     if (folder.id in expandedFolders) {
                         val children = state.activeRules.filter { it.folderId == folder.id }
                         if (children.isEmpty()) {
-                            item(key = "empty${folder.id}") {
+                            item(key = "e" + folder.id) {
                                 Text(
                                     "这个文件夹是空的",
                                     style = MaterialTheme.typography.bodySmall,
@@ -330,16 +186,9 @@ fun HomeScreen(
                                 )
                             }
                         } else {
-                            val orderedChildren = orderFor(folder.id, children, drag)
-                            orderedChildren.forEach { child ->
-                                item(key = "n${child.id}") {
-                                    RuleRow(
-                                        child,
-                                        indented = true,
-                                        itemKey = "n${child.id}",
-                                        itemModifier = Modifier.animateItem(),
-                                        isDragged = drag.previewOrder != null && drag.ruleId == child.id
-                                    )
+                            children.forEach { child ->
+                                item(key = "n" + child.id) {
+                                    RuleRow(child, indented = true, itemModifier = Modifier.animateItem())
                                 }
                             }
                         }
@@ -350,15 +199,8 @@ fun HomeScreen(
             val rules = state.visibleRules
             if (rules.isNotEmpty()) {
                 item { SectionHeader("预案") }
-                val ordered = orderFor(state.currentFolderId, rules, drag)
-                items(ordered, key = { "a${it.id}" }) { rule ->
-                    RuleRow(
-                        rule,
-                        indented = false,
-                        itemKey = "a${rule.id}",
-                        itemModifier = Modifier.animateItem(),
-                        isDragged = drag.previewOrder != null && drag.ruleId == rule.id
-                    )
+                items(rules, key = { "a" + it.id }) { rule ->
+                    RuleRow(rule, indented = false, itemModifier = Modifier.animateItem())
                 }
             } else if (state.visibleFolders.isEmpty() && frequentRules.isEmpty()) {
                 item {
@@ -373,78 +215,51 @@ fun HomeScreen(
             }
             item { Spacer(Modifier.height(72.dp)) }
         }
+    }
 
-        // 插入线 + 抬起卡片：同一个覆盖层单元，坐标来自 LazyList 的实时槽位（按 item key 精确匹配）
-        drag.ruleId?.let { draggedId ->
-            val slotInfo = listState.layoutInfo.visibleItemsInfo
-                .firstOrNull { it.key == drag.itemKey }
-            val slotYpx = listTopY.floatValue + (slotInfo?.offset ?: 0).toFloat()
-            val y by androidx.compose.animation.core.animateFloatAsState(
-                targetValue = slotYpx,
-                animationSpec = androidx.compose.animation.core.spring(
-                    dampingRatio = androidx.compose.animation.core.Spring.DampingRatioNoBouncy,
-                    stiffness = androidx.compose.animation.core.Spring.StiffnessMediumLow
-                ),
-                label = "dragSlotY"
-            )
-            val cardW = with(density) { drag.size.width.toDp() }
-            val lineH = with(density) { 3.dp.toPx() }
-            val dotR = with(density) { 5.dp.toPx() }
-            val gapPx = with(density) { 5.dp.toPx() }
-            // 插入线（深绿横线 + 左端圆点）
-            androidx.compose.foundation.Canvas(
-                modifier = Modifier
-                    .width(cardW)
-                    .height(with(density) { 12.dp })
-                    .offset { IntOffset(drag.cardLeft.toInt(), (y + gapPx / 2).toInt()) }
-            ) {
-                val cy = size.height / 2f
-                drawRect(
-                    color = com.ifthen.app.ui.components.InsertLineColor,
-                    topLeft = androidx.compose.ui.geometry.Offset(dotR * 1.3f, cy - lineH / 2f),
-                    size = androidx.compose.ui.geometry.Size(size.width - dotR * 1.3f, lineH)
-                )
-                drawCircle(
-                    color = com.ifthen.app.ui.components.InsertLineColor,
-                    radius = dotR,
-                    center = androidx.compose.ui.geometry.Offset(dotR * 1.3f, cy)
-                )
-            }
-            // 抬起卡片：紧贴插入线下方
-            Card(
-                modifier = Modifier
-                    .width(cardW)
-                    .offset { IntOffset(drag.cardLeft.toInt(), (y + gapPx + 12.dp.toPx()).toInt()) },
-                shape = RoundedCornerShape(14.dp),
-                colors = CardDefaults.cardColors(
-                    containerColor = MaterialTheme.colorScheme.surfaceVariant
-                ),
-                border = androidx.compose.foundation.BorderStroke(
-                    1.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.45f)
-                ),
-                elevation = CardDefaults.cardElevation(defaultElevation = 12.dp)
-            ) {
-                Row(
-                    modifier = Modifier.padding(start = 14.dp, end = 14.dp, top = 12.dp, bottom = 12.dp),
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Column(Modifier.weight(1f)) {
-                        Text(
-                            text = drag.ruleText,
-                            style = MaterialTheme.typography.bodyLarge,
-                            color = MaterialTheme.colorScheme.onSurface
-                        )
-                        Spacer(Modifier.height(2.dp))
-                        Text(
-                            text = "→ ${drag.ruleThen}",
-                            style = MaterialTheme.typography.bodyMedium,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-                    }
-                    StreakChip(drag.streak)
-                }
+    // 快捷切换文件夹（左滑「移夹」入口）
+    movingRule?.let { rule ->
+        val rows = ArrayList<Pair<Int, Folder?>>()
+        rows.add(0 to null)
+        val childrenOf = state.folders.groupBy { it.parentId }
+        fun walk(parentId: Long?, depth: Int) {
+            childrenOf[parentId].orEmpty().forEach { f ->
+                rows.add(depth to f)
+                walk(f.id, depth + 1)
             }
         }
+        walk(null, 1)
+        AlertDialog(
+            onDismissRequest = { movingRule = null },
+            title = { Text("把「" + rule.ifText + "」移到…") },
+            text = {
+                Column(Modifier.fillMaxWidth()) {
+                    rows.forEach { item ->
+                        val depth = item.first
+                        val f = item.second
+                        val isCurrent = f?.id == rule.folderId
+                        TextButton(
+                            onClick = {
+                                vm.moveRule(rule.id, f?.id)
+                                movingRule = null
+                                onRecord(if (f == null) "已移到根目录" else "已移到 " + f.emoji + f.name)
+                            },
+                            modifier = Modifier.fillMaxWidth(),
+                            contentPadding = PaddingValues(start = (12 + depth * 20).dp)
+                        ) {
+                            Text(
+                                text = (if (f == null) "根目录" else f.emoji + f.name) +
+                                    if (isCurrent) "（当前）" else "",
+                                modifier = Modifier.fillMaxWidth(),
+                                color = MaterialTheme.colorScheme.onSurface
+                            )
+                        }
+                    }
+                }
+            },
+            confirmButton = {},
+            dismissButton = { TextButton(onClick = { movingRule = null }) { Text("取消") } }
+        )
     }
 
     if (creatingFolder) {
@@ -479,7 +294,7 @@ fun HomeScreen(
         AlertDialog(
             onDismissRequest = { ruleToDelete = null },
             title = { Text("删除这条预案？") },
-            text = { Text("「${rule.ifText}」及其全部打卡记录会被永久删除，无法恢复。") },
+            text = { Text("「" + rule.ifText + "」及其全部打卡记录会被永久删除，无法恢复。") },
             confirmButton = {
                 TextButton(onClick = {
                     vm.deleteRule(rule)
@@ -494,12 +309,12 @@ fun HomeScreen(
     pendingDelete?.let { folder ->
         AlertDialog(
             onDismissRequest = { pendingDelete = null },
-            title = { Text("删除「${folder.emoji}${folder.name}」？") },
+            title = { Text("删除「" + folder.emoji + folder.name + "」？") },
             text = {
                 val imp = deleteImpact
                 Text(
                     if (imp == null) "计算中…"
-                    else "将连带删除 ${imp.first} 条预案及 ${imp.second} 条打卡记录（含所有子文件夹），无法恢复。"
+                    else "将连带删除 " + imp.first + " 条预案及 " + imp.second + " 条打卡记录（含所有子文件夹），无法恢复。"
                 )
             },
             confirmButton = {

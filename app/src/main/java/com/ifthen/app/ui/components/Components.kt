@@ -38,7 +38,7 @@ import androidx.compose.material.icons.automirrored.filled.TrendingUp
 import androidx.compose.material.icons.filled.Archive
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.DeleteOutline
-import androidx.compose.material.icons.filled.DragIndicator
+import androidx.compose.material.icons.filled.DriveFileMove
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
@@ -82,6 +82,7 @@ val FolderColors = listOf(0xFF1F6E5C, 0xFF2F5DA8, 0xFF6A4FA3, 0xFFB8860B, 0xFF8C
 val InsertLineColor = Color(0xFF1F6E5C)
 
 val ActionMiss = Color(0xFFE08A2E)
+val ActionMove = Color(0xFF3D6E8C)
 val ActionArchive = Color(0xFF5B6E8C)
 val ActionDelete = Color(0xFFC0392B)
 
@@ -246,12 +247,9 @@ fun SwipeRuleCard(
     stat: RuleStat,
     revealedId: Long?,
     onReveal: (Long?) -> Unit,
-    dragging: Boolean = false,
-    swipeEnabled: Boolean = true,
-    hidden: Boolean = false,
-    dragHandleModifier: Modifier = Modifier,
     onDone: () -> Unit,
     onMiss: () -> Unit,
+    onMove: () -> Unit,
     onArchive: () -> Unit,
     onDelete: () -> Unit,
     onOpen: () -> Unit,
@@ -260,7 +258,7 @@ fun SwipeRuleCard(
 ) {
     val scope = rememberCoroutineScope()
     val density = LocalDensity.current
-    val actionsWidthPx = with(density) { 150.dp.toPx() }
+    val actionsWidthPx = with(density) { 196.dp.toPx() }
     val offsetX = remember { Animatable(0f) }
     var pendingJob by remember { mutableStateOf<kotlinx.coroutines.Job?>(null) }
     var cardWidthPx by remember { mutableStateOf(0f) }
@@ -268,18 +266,12 @@ fun SwipeRuleCard(
     val revealProgress = if (offsetX.value < 0f) {
         (-offsetX.value / actionsWidthPx).coerceIn(0f, 1f)
     } else 0f
-    val contentAlpha = 1f - revealProgress
     val cardScale by animateFloatAsState(
         targetValue = if (succeeded) 1.02f else 1f,
         animationSpec = spring(dampingRatio = Spring.DampingRatioMediumBouncy),
         label = "cardPop"
     )
     val revealed = revealedId == rule.id
-    val sourceAlpha by animateFloatAsState(
-        targetValue = if (dragging) 0.35f else 1f,
-        animationSpec = tween(150),
-        label = "sourceAlpha"
-    )
 
     LaunchedEffect(revealed) {
         if (!revealed && offsetX.value != 0f) {
@@ -290,11 +282,10 @@ fun SwipeRuleCard(
     Box(
         modifier = modifier
             .fillMaxWidth()
-            .alpha(if (hidden) 0f else 1f)
     ) {
         // 左滑露出的动作钮（在卡片下层）
         val buttonsVisible by animateFloatAsState(
-            targetValue = if (!dragging && offsetX.value < -4f) 1f else 0f,
+            targetValue = if (offsetX.value < -4f) 1f else 0f,
             animationSpec = tween(120),
             label = "buttonsAlpha"
         )
@@ -309,6 +300,9 @@ fun SwipeRuleCard(
         ) {
             RoundAction("没做", ActionMiss, Icons.Filled.Close) {
                 onMiss(); scope.launch { offsetX.animateTo(0f, spring()) }; onReveal(null)
+            }
+            RoundAction("移夹", ActionMove, Icons.Filled.DriveFileMove) {
+                scope.launch { offsetX.animateTo(0f, spring()) }; onReveal(null); onMove()
             }
             RoundAction("归档", ActionArchive, Icons.Filled.Archive) {
                 onArchive(); scope.launch { offsetX.animateTo(0f, spring()) }; onReveal(null)
@@ -325,9 +319,8 @@ fun SwipeRuleCard(
                 .onSizeChanged { cardWidthPx = it.width.toFloat() }
                 .offset { IntOffset(offsetX.value.roundToInt(), 0) }
                 .scale(cardScale)
-                .alpha(sourceAlpha)
-                .pointerInput(rule.id, revealed, swipeEnabled) {
-                    if (swipeEnabled) detectHorizontalDragGestures(
+                .pointerInput(rule.id, revealed) {
+                    detectHorizontalDragGestures(
                         onDragEnd = {
                             pendingJob?.cancel()
                             val target = when {
@@ -372,7 +365,7 @@ fun SwipeRuleCard(
                     .padding(start = 14.dp, end = 6.dp, top = 12.dp, bottom = 12.dp),
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                Column(Modifier.weight(1f).alpha(contentAlpha)) {
+                Column(Modifier.weight(1f).alpha(1f - revealProgress)) {
                     Text(
                         text = rule.ifText,
                         style = MaterialTheme.typography.bodyLarge,
@@ -389,16 +382,6 @@ fun SwipeRuleCard(
                         StreakChip(stat.streak)
                     }
                 }
-                Icon(
-                    imageVector = Icons.Filled.DragIndicator,
-                    contentDescription = "长按拖到文件夹",
-                    tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.55f),
-                    modifier = Modifier
-                        .alpha(contentAlpha)
-                        .padding(end = 4.dp)
-                        .size(22.dp)
-                        .then(dragHandleModifier)
-                )
             }
         }
     }
@@ -413,14 +396,17 @@ private fun RoundAction(
 ) {
     Column(
         horizontalAlignment = Alignment.CenterHorizontally,
-        modifier = Modifier.width(44.dp)
+        modifier = Modifier
+            .width(52.dp)
+            .clip(RoundedCornerShape(10.dp))
+            .clickable { onClick() }
+            .padding(vertical = 4.dp)
     ) {
         Box(
             modifier = Modifier
                 .size(38.dp)
                 .clip(CircleShape)
-                .background(color)
-                .clickable { onClick() },
+                .background(color),
             contentAlignment = Alignment.Center
         ) {
             Icon(
