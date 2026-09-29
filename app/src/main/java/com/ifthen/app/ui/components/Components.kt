@@ -57,6 +57,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
+import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.rotate
 import androidx.compose.ui.draw.scale
@@ -76,6 +77,9 @@ import kotlin.math.roundToInt
 
 val FolderEmojis = listOf("📁", "🌙", "☀️", "💼", "🏋️", "📚", "🍔", "🧘", "✈️", "🌱")
 val FolderColors = listOf(0xFF1F6E5C, 0xFF2F5DA8, 0xFF6A4FA3, 0xFFB8860B, 0xFF8C4A2F, 0xFF0F7B7B)
+
+/** 插入指示线：深绿（与主色一致的品牌色） */
+val InsertLineColor = Color(0xFF1F6E5C)
 
 val ActionMiss = Color(0xFFE08A2E)
 val ActionArchive = Color(0xFF5B6E8C)
@@ -244,6 +248,7 @@ fun SwipeRuleCard(
     onReveal: (Long?) -> Unit,
     dragging: Boolean = false,
     swipeEnabled: Boolean = true,
+    hidden: Boolean = false,
     dragHandleModifier: Modifier = Modifier,
     onDone: () -> Unit,
     onMiss: () -> Unit,
@@ -282,7 +287,30 @@ fun SwipeRuleCard(
         }
     }
 
-    Box(modifier = modifier.fillMaxWidth()) {
+    val lineThickness = with(density) { 3.dp.toPx() }
+    val dotRadius = with(density) { 5.dp.toPx() }
+    Box(
+        modifier = modifier
+            .fillMaxWidth()
+            .drawBehind {
+                if (hidden) {
+                    val cy = lineThickness / 2f
+                    drawRect(
+                        color = InsertLineColor,
+                        topLeft = androidx.compose.ui.geometry.Offset(dotRadius * 1.3f, cy - lineThickness / 2f),
+                        size = androidx.compose.ui.geometry.Size(
+                            (size.width - dotRadius * 1.3f).coerceAtLeast(0f), lineThickness
+                        )
+                    )
+                    drawCircle(
+                        color = InsertLineColor,
+                        radius = dotRadius,
+                        center = androidx.compose.ui.geometry.Offset(dotRadius * 1.3f, cy)
+                    )
+                }
+            }
+            .alpha(if (hidden) 0f else 1f)
+    ) {
         // 左滑露出的动作钮（在卡片下层）
         val buttonsVisible by animateFloatAsState(
             targetValue = if (!dragging && offsetX.value < -4f) 1f else 0f,

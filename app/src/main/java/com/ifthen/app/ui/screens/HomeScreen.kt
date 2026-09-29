@@ -121,18 +121,6 @@ fun HomeScreen(
         isDragged: Boolean = false
     ) {
         val handlePos = remember { mutableStateOf(Offset.Zero) }
-        val lineHeight = with(density) { 5.dp.toPx() }
-        val slotModifier = itemModifier
-            .alpha(if (isDragged) 0f else 1f)
-            .drawBehind {
-                if (isDragged) {
-                    drawRect(
-                        color = lineColor,
-                        topLeft = Offset(0f, 0f),
-                        size = androidx.compose.ui.geometry.Size(size.width, lineHeight)
-                    )
-                }
-            }
         SwipeRuleCard(
             rule = rule,
             stat = state.stats[rule.id] ?: RuleStat(),
@@ -141,7 +129,8 @@ fun HomeScreen(
             dragging = drag.ruleId == rule.id,
             swipeEnabled = drag.ruleId == null,
             modifier = if (indented) Modifier.padding(start = 18.dp) else Modifier,
-            cardModifier = slotModifier
+            hidden = isDragged,
+            cardModifier = itemModifier
                 .onGloballyPositioned { coords -> cardRects[rule.id] = coords.boundsInWindow() },
             dragHandleModifier = Modifier
                 .onGloballyPositioned { handlePos.value = it.positionInWindow() }
@@ -384,7 +373,7 @@ fun HomeScreen(
                         val maxX = (screenWidthPx - ghostWidthPx).coerceAtLeast(0f)
                         IntOffset(
                             (drag.pos.x - ghostWidthPx / 2f).coerceIn(0f, maxX).toInt(),
-                            (drag.pos.y - ghostHeightPx).toInt()
+                            (drag.pos.y + with(density) { 6.dp.toPx() }).toInt()
                         )
                     }
                     .scale(1.03f)
