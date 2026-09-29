@@ -287,28 +287,9 @@ fun SwipeRuleCard(
         }
     }
 
-    val lineThickness = with(density) { 3.dp.toPx() }
-    val dotRadius = with(density) { 5.dp.toPx() }
     Box(
         modifier = modifier
             .fillMaxWidth()
-            .drawBehind {
-                if (hidden) {
-                    val cy = lineThickness / 2f
-                    drawRect(
-                        color = InsertLineColor,
-                        topLeft = androidx.compose.ui.geometry.Offset(dotRadius * 1.3f, cy - lineThickness / 2f),
-                        size = androidx.compose.ui.geometry.Size(
-                            (size.width - dotRadius * 1.3f).coerceAtLeast(0f), lineThickness
-                        )
-                    )
-                    drawCircle(
-                        color = InsertLineColor,
-                        radius = dotRadius,
-                        center = androidx.compose.ui.geometry.Offset(dotRadius * 1.3f, cy)
-                    )
-                }
-            }
             .alpha(if (hidden) 0f else 1f)
     ) {
         // 左滑露出的动作钮（在卡片下层）

@@ -74,6 +74,8 @@ private class DragState {
     var rootBounds by mutableStateOf<Rect?>(null)
     var previewGroup by mutableStateOf<Long?>(null)
     var previewOrder by mutableStateOf<List<Long>?>(null)
+    var itemKey by mutableStateOf<String?>(null)
+    var cardLeft by mutableStateOf(0f)
 
     val rootHovered: Boolean
         get() = ruleId != null && rootBounds?.contains(pos) == true
@@ -112,11 +114,14 @@ fun HomeScreen(
     val lineColor = MaterialTheme.colorScheme.primary
     val density = LocalDensity.current
     val screenWidthPx = with(density) { LocalConfiguration.current.screenWidthDp.dp.toPx() }
+    val listState = androidx.compose.foundation.lazy.rememberLazyListState()
+    val listTopY = remember { androidx.compose.runtime.mutableFloatStateOf(0f) }
 
     @Composable
     fun RuleRow(
         rule: Rule,
         indented: Boolean,
+        itemKey: String,
         itemModifier: Modifier = Modifier,
         isDragged: Boolean = false
     ) {
@@ -140,6 +145,8 @@ fun HomeScreen(
                             val cardRect = cardRects[rule.id]
                             val finger = handlePos.value + off
                             drag.ruleId = rule.id
+                            drag.itemKey = itemKey
+                            drag.cardLeft = cardRects[rule.id]?.left ?: 0f
                             drag.previewGroup = rule.folderId
                             drag.previewOrder = null
                             drag.ruleText = rule.ifText
@@ -216,7 +223,11 @@ fun HomeScreen(
 
     Box(modifier = modifier.fillMaxSize()) {
         LazyColumn(
-            modifier = Modifier.fillMaxSize().padding(horizontal = 16.dp),
+            state = listState,
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(horizontal = 16.dp)
+                .onGloballyPositioned { listTopY.floatValue = it.positionInWindow().y },
             verticalArrangement = Arrangement.spacedBy(8.dp)
         ) {
             item {
@@ -325,6 +336,7 @@ fun HomeScreen(
                                     RuleRow(
                                         child,
                                         indented = true,
+                                        itemKey = "n${child.id}",
                                         itemModifier = Modifier.animateItem(),
                                         isDragged = drag.previewOrder != null && drag.ruleId == child.id
                                     )
@@ -343,6 +355,7 @@ fun HomeScreen(
                     RuleRow(
                         rule,
                         indented = false,
+                        itemKey = "a${rule.id}",
                         itemModifier = Modifier.animateItem(),
                         isDragged = drag.previewOrder != null && drag.ruleId == rule.id
                     )
@@ -361,28 +374,55 @@ fun HomeScreen(
             item { Spacer(Modifier.height(72.dp)) }
         }
 
-        // 拖拽跟手浮层：整卡矩形，且始终留在屏幕内
-        drag.ruleId?.let {
-            val ghostWidthDp = with(density) { drag.size.width.toDp() }
-            val ghostWidthPx = drag.size.width.toFloat()
-            val ghostHeightPx = drag.size.height.toFloat()
+        // 插入线 + 抬起卡片：同一个覆盖层单元，坐标来自 LazyList 的实时槽位（按 item key 精确匹配）
+        drag.ruleId?.let { draggedId ->
+            val slotInfo = listState.layoutInfo.visibleItemsInfo
+                .firstOrNull { it.key == drag.itemKey }
+            val slotYpx = listTopY.floatValue + (slotInfo?.offset ?: 0).toFloat()
+            val y by androidx.compose.animation.core.animateFloatAsState(
+                targetValue = slotYpx,
+                animationSpec = androidx.compose.animation.core.spring(
+                    dampingRatio = androidx.compose.animation.core.Spring.DampingRatioNoBouncy,
+                    stiffness = androidx.compose.animation.core.Spring.StiffnessMediumLow
+                ),
+                label = "dragSlotY"
+            )
+            val cardW = with(density) { drag.size.width.toDp() }
+            val lineH = with(density) { 3.dp.toPx() }
+            val dotR = with(density) { 5.dp.toPx() }
+            val gapPx = with(density) { 5.dp.toPx() }
+            // 插入线（深绿横线 + 左端圆点）
+            androidx.compose.foundation.Canvas(
+                modifier = Modifier
+                    .width(cardW)
+                    .height(with(density) { 12.dp })
+                    .offset { IntOffset(drag.cardLeft.toInt(), (y + gapPx / 2).toInt()) }
+            ) {
+                val cy = size.height / 2f
+                drawRect(
+                    color = com.ifthen.app.ui.components.InsertLineColor,
+                    topLeft = androidx.compose.ui.geometry.Offset(dotR * 1.3f, cy - lineH / 2f),
+                    size = androidx.compose.ui.geometry.Size(size.width - dotR * 1.3f, lineH)
+                )
+                drawCircle(
+                    color = com.ifthen.app.ui.components.InsertLineColor,
+                    radius = dotR,
+                    center = androidx.compose.ui.geometry.Offset(dotR * 1.3f, cy)
+                )
+            }
+            // 抬起卡片：紧贴插入线下方
             Card(
                 modifier = Modifier
-                    .width(ghostWidthDp)
-                    .offset {
-                        val maxX = (screenWidthPx - ghostWidthPx).coerceAtLeast(0f)
-                        IntOffset(
-                            (drag.pos.x - ghostWidthPx / 2f).coerceIn(0f, maxX).toInt(),
-                            (drag.pos.y + with(density) { 6.dp.toPx() }).toInt()
-                        )
-                    }
-                    .scale(1.03f)
-                    .alpha(0.97f),
+                    .width(cardW)
+                    .offset { IntOffset(drag.cardLeft.toInt(), (y + gapPx + 12.dp.toPx()).toInt()) },
                 shape = RoundedCornerShape(14.dp),
                 colors = CardDefaults.cardColors(
-                    containerColor = MaterialTheme.colorScheme.primaryContainer
+                    containerColor = MaterialTheme.colorScheme.surfaceVariant
                 ),
-                elevation = CardDefaults.cardElevation(defaultElevation = 8.dp)
+                border = androidx.compose.foundation.BorderStroke(
+                    1.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.45f)
+                ),
+                elevation = CardDefaults.cardElevation(defaultElevation = 12.dp)
             ) {
                 Row(
                     modifier = Modifier.padding(start = 14.dp, end = 14.dp, top = 12.dp, bottom = 12.dp),
@@ -392,13 +432,13 @@ fun HomeScreen(
                         Text(
                             text = drag.ruleText,
                             style = MaterialTheme.typography.bodyLarge,
-                            color = MaterialTheme.colorScheme.onPrimaryContainer
+                            color = MaterialTheme.colorScheme.onSurface
                         )
                         Spacer(Modifier.height(2.dp))
                         Text(
                             text = "→ ${drag.ruleThen}",
                             style = MaterialTheme.typography.bodyMedium,
-                            color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.8f)
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
                     }
                     StreakChip(drag.streak)
