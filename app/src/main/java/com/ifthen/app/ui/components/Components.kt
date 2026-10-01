@@ -391,22 +391,25 @@ fun SwipeRuleCard(
                     ChainStepBadge(step = step, expanded = stepExpanded, onClick = { onStepClick?.invoke() })
                     Spacer(Modifier.width(10.dp))
                 }
-                Column(Modifier.weight(1f).alpha(1f - revealProgress)) {
-                    Text(
+                Column(
+                    Modifier.weight(1f).alpha(1f - revealProgress),
+                    verticalArrangement = Arrangement.spacedBy(3.dp)
+                ) {
+                    TaggedLine(
+                        tag = "如果",
+                        tone = TagTone.Condition,
                         text = rule.ifText,
                         style = MaterialTheme.typography.bodyLarge,
                         color = MaterialTheme.colorScheme.onSurface
                     )
-                    Spacer(Modifier.height(2.dp))
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Text(
-                            text = "→ ${rule.thenText}",
-                            style = MaterialTheme.typography.bodyMedium,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            modifier = Modifier.weight(1f, fill = false)
-                        )
-                        StreakChip(stat.streak)
-                    }
+                    TaggedLine(
+                        tag = "就",
+                        tone = TagTone.Action,
+                        text = rule.thenText,
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        trailing = { StreakChip(stat.streak) }
+                    )
                 }
             }
         }
@@ -638,6 +641,72 @@ fun Heatmap(counts: List<Int>, modifier: Modifier = Modifier) {
     }
 }
 
+/** 「如果 / 就」语义标签的共用列宽：两个标签左边缘对齐，正文左边缘也对齐 */
+private val TagColumnWidth = 40.dp
+
+enum class TagTone { Condition, Action }
+
+/** 小标签：条件＝松绿容器色，动作＝琥珀容器色（走 MD3 容器 token，暗色模式自动跟随） */
+@Composable
+fun SemanticTag(text: String, tone: TagTone, modifier: Modifier = Modifier) {
+    val bg: Color
+    val fg: Color
+    when (tone) {
+        TagTone.Condition -> {
+            bg = MaterialTheme.colorScheme.primary
+            fg = MaterialTheme.colorScheme.onPrimary
+        }
+        TagTone.Action -> {
+            bg = MaterialTheme.colorScheme.secondaryContainer
+            fg = MaterialTheme.colorScheme.onSecondaryContainer
+        }
+    }
+    Text(
+        text = text,
+        style = MaterialTheme.typography.labelSmall,
+        fontWeight = FontWeight.SemiBold,
+        color = fg,
+        maxLines = 1,
+        modifier = modifier
+            .clip(RoundedCornerShape(6.dp))
+            .background(bg)
+            .padding(horizontal = 7.dp, vertical = 2.dp)
+    )
+}
+
+/** 标签 + 正文一行；正文换行时标签贴第一行 */
+@Composable
+fun TaggedLine(
+    tag: String,
+    tone: TagTone,
+    text: String,
+    style: androidx.compose.ui.text.TextStyle,
+    color: Color,
+    maxLines: Int = 4,
+    modifier: Modifier = Modifier,
+    trailing: (@Composable () -> Unit)? = null
+) {
+    Row(modifier, verticalAlignment = Alignment.Top) {
+        Box(
+            Modifier
+                .width(TagColumnWidth)
+                .padding(top = 2.dp),
+            contentAlignment = Alignment.CenterStart
+        ) { SemanticTag(tag, tone) }
+        Text(
+            text,
+            style = style,
+            color = color,
+            maxLines = maxLines,
+            overflow = TextOverflow.Ellipsis,
+            modifier = Modifier.weight(1f)
+        )
+        if (trailing != null) {
+            Box(Modifier.padding(start = 8.dp)) { trailing() }
+        }
+    }
+}
+
 /** 链条序号钮：点它展开/收起链条视图 */
 @Composable
 fun ChainStepBadge(
@@ -771,17 +840,24 @@ fun ChainViewPanel(
                         "${i + 1}",
                         style = MaterialTheme.typography.labelLarge,
                         color = InsertLineColor,
-                        modifier = Modifier.width(22.dp)
+                        modifier = Modifier.width(16.dp)
                     )
-                    Column(Modifier.weight(1f)) {
-                        Text(r.ifText, style = MaterialTheme.typography.bodyMedium, maxLines = 1,
-                            overflow = TextOverflow.Ellipsis)
-                        Text(
-                            "→ ${r.thenText}",
+                    Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                        TaggedLine(
+                            tag = "如果",
+                            tone = TagTone.Condition,
+                            text = r.ifText,
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.onSurface,
+                            maxLines = 1
+                        )
+                        TaggedLine(
+                            tag = "就",
+                            tone = TagTone.Action,
+                            text = r.thenText,
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis
+                            maxLines = 1
                         )
                     }
                     if (i > 0) {
@@ -799,7 +875,7 @@ fun ChainViewPanel(
                     "↳ 后续「${r.ifText}」在 ${folderLabel(r.folderId)}",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    modifier = Modifier.padding(start = 22.dp, top = 4.dp)
+                    modifier = Modifier.padding(start = 16.dp, top = 4.dp)
                 )
             }
         }
