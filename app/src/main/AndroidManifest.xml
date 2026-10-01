@@ -4,7 +4,7 @@
     <application
         android:allowBackup="true"
         android:icon="@mipmap/ic_launcher"
-        android:label="预案"
+        android:label="果然"
         android:supportsRtl="true"
         android:theme="@style/Theme.IfThen">
         <activity
