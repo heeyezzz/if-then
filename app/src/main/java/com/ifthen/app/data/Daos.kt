@@ -42,6 +42,12 @@ interface RuleDao {
 
     @Query("SELECT COALESCE(MAX(sortOrder), -1) FROM rules WHERE folderId IS :folderId")
     suspend fun maxSortOrder(folderId: Long?): Int
+
+    @Query("SELECT * FROM rules WHERE nextRuleId = :id LIMIT 1")
+    suspend fun predecessorOf(id: Long): Rule?
+
+    @Query("UPDATE rules SET nextRuleId = :next WHERE id = :id")
+    suspend fun updateNext(id: Long, next: Long?)
 }
 
 @Dao
@@ -81,7 +87,7 @@ data class RuleTriggerCount(val ruleId: Long, val cnt: Int)
 
 @Dao
 interface FolderDao {
-    @Query("SELECT * FROM folders ORDER BY createdAt ASC")
+    @Query("SELECT * FROM folders ORDER BY sortOrder ASC, createdAt ASC")
     fun observeAll(): Flow<List<Folder>>
 
     @Insert(onConflict = OnConflictStrategy.REPLACE)
@@ -98,4 +104,7 @@ interface FolderDao {
 
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insertAll(folders: List<Folder>)
+
+    @Query("SELECT COALESCE(MAX(sortOrder), -1) FROM folders WHERE parentId IS :parentId")
+    suspend fun maxSortOrder(parentId: Long?): Int
 }

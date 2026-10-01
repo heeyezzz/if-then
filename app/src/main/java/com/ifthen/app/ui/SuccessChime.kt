@@ -5,10 +5,11 @@ import android.media.AudioAttributes
 import android.media.SoundPool
 import com.ifthen.app.R
 
-/** 完成打卡的「叮」声，滴答清单式短促确认音 */
+/** 完成打卡的「叮」声，滴答清单式短促确认音；链条全做齐用上行三音区分 */
 object SuccessChime {
     private var soundPool: SoundPool? = null
     private var soundId = 0
+    private var chainSoundId = 0
 
     fun init(context: Context) {
         if (soundPool != null) return
@@ -22,10 +23,15 @@ object SuccessChime {
             )
             .build()
         soundId = sp.load(context.applicationContext, R.raw.ding, 1)
+        chainSoundId = sp.load(context.applicationContext, R.raw.chain, 1)
         soundPool = sp
     }
 
     fun play() {
         soundPool?.play(soundId, 1f, 1f, 1, 0, 1f)
+    }
+
+    fun playChain() {
+        soundPool?.play(chainSoundId, 1f, 1f, 1, 0, 1f)
     }
 }

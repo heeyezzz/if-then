@@ -18,6 +18,7 @@ import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.gestures.detectHorizontalDragGestures
+import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -30,8 +31,10 @@ import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
 import androidx.compose.material.icons.automirrored.filled.TrendingUp
@@ -61,16 +64,23 @@ import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.rotate
 import androidx.compose.ui.draw.scale
+import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import com.ifthen.app.data.Folder
 import com.ifthen.app.data.Rule
+import com.ifthen.app.ui.NextStep
 import com.ifthen.app.ui.RuleStat
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlin.math.abs
 import kotlin.math.roundToInt
@@ -257,6 +267,10 @@ fun SwipeRuleCard(
     onArchive: () -> Unit,
     onDelete: () -> Unit,
     onOpen: () -> Unit,
+    step: Int? = null,
+    stepExpanded: Boolean = false,
+    onStepClick: (() -> Unit)? = null,
+    swipeEnabled: Boolean = true,
     cardModifier: Modifier = Modifier,
     modifier: Modifier = Modifier
 ) {
@@ -276,6 +290,44 @@ fun SwipeRuleCard(
         label = "cardPop"
     )
     val revealed = revealedId == rule.id
+
+    val dragModifier = if (swipeEnabled) {
+        Modifier.pointerInput(rule.id, revealed) {
+            detectHorizontalDragGestures(
+                onDragEnd = {
+                    pendingJob?.cancel()
+                    val target = when {
+                        offsetX.value > 140f -> 1f   // 右滑到底 = 完成
+                        offsetX.value < -actionsWidthPx / 2 -> -actionsWidthPx
+                        else -> 0f
+                    }
+                    if (target == 1f) {
+                        pendingJob = scope.launch {
+                            succeeded = true
+                            onDone()
+                            offsetX.animateTo(
+                                cardWidthPx.coerceAtLeast(320f), tween(180)
+                            )
+                            offsetX.snapTo(0f)
+                            succeeded = false
+                        }
+                    } else {
+                        pendingJob = scope.launch {
+                            offsetX.animateTo(target, spring(stiffness = Spring.StiffnessMediumLow))
+                        }
+                        onReveal(if (target == 0f) null else rule.id)
+                    }
+                },
+                onHorizontalDrag = { change, delta ->
+                    change.consume()
+                    pendingJob?.cancel()
+                    val next = (offsetX.value + delta)
+                        .coerceIn(-actionsWidthPx, cardWidthPx.coerceAtLeast(320f))
+                    pendingJob = scope.launch { offsetX.snapTo(next) }
+                }
+            )
+        }
+    } else Modifier
 
     LaunchedEffect(revealed) {
         if (!revealed && offsetX.value != 0f) {
@@ -323,41 +375,7 @@ fun SwipeRuleCard(
                 .onSizeChanged { cardWidthPx = it.width.toFloat() }
                 .offset { IntOffset(offsetX.value.roundToInt(), 0) }
                 .scale(cardScale)
-                .pointerInput(rule.id, revealed) {
-                    detectHorizontalDragGestures(
-                        onDragEnd = {
-                            pendingJob?.cancel()
-                            val target = when {
-                                offsetX.value > 140f -> 1f   // 右滑到底 = 完成
-                                offsetX.value < -actionsWidthPx / 2 -> -actionsWidthPx
-                                else -> 0f
-                            }
-                            if (target == 1f) {
-                                pendingJob = scope.launch {
-                                    succeeded = true
-                                    onDone()
-                                    offsetX.animateTo(
-                                        cardWidthPx.coerceAtLeast(320f), tween(180)
-                                    )
-                                    offsetX.snapTo(0f)
-                                    succeeded = false
-                                }
-                            } else {
-                                pendingJob = scope.launch {
-                                    offsetX.animateTo(target, spring(stiffness = Spring.StiffnessMediumLow))
-                                }
-                                onReveal(if (target == 0f) null else rule.id)
-                            }
-                        },
-                        onHorizontalDrag = { change, delta ->
-                            change.consume()
-                            pendingJob?.cancel()
-                            val next = (offsetX.value + delta)
-                                .coerceIn(-actionsWidthPx, cardWidthPx.coerceAtLeast(320f))
-                            pendingJob = scope.launch { offsetX.snapTo(next) }
-                        }
-                    )
-                },
+                .then(dragModifier),
             shape = RoundedCornerShape(14.dp),
             colors = CardDefaults.cardColors(
                 containerColor = MaterialTheme.colorScheme.surfaceVariant
@@ -369,6 +387,10 @@ fun SwipeRuleCard(
                     .padding(start = 14.dp, end = 6.dp, top = 12.dp, bottom = 12.dp),
                 verticalAlignment = Alignment.CenterVertically
             ) {
+                if (step != null) {
+                    ChainStepBadge(step = step, expanded = stepExpanded, onClick = { onStepClick?.invoke() })
+                    Spacer(Modifier.width(10.dp))
+                }
                 Column(Modifier.weight(1f).alpha(1f - revealProgress)) {
                     Text(
                         text = rule.ifText,
@@ -613,5 +635,256 @@ fun Heatmap(counts: List<Int>, modifier: Modifier = Modifier) {
                 }
             }
         }
+    }
+}
+
+/** 链条序号钮：点它展开/收起链条视图 */
+@Composable
+fun ChainStepBadge(
+    step: Int,
+    expanded: Boolean,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier
+) {
+    val primary = MaterialTheme.colorScheme.primary
+    Box(
+        modifier = modifier
+            .size(26.dp)
+            .clip(CircleShape)
+            .background(if (expanded) primary else primary.copy(alpha = 0.14f))
+            .semantics { contentDescription = "链条第 $step 步" }
+            .clickable { onClick() },
+        contentAlignment = Alignment.Center
+    ) {
+        Text(
+            "$step",
+            style = MaterialTheme.typography.labelLarge,
+            fontWeight = FontWeight.Bold,
+            color = if (expanded) Color.White else primary
+        )
+    }
+}
+
+/** 链条组容器：左侧一条品牌绿竖线把头到尾串起来 */
+@Composable
+fun ChainRail(modifier: Modifier = Modifier, content: @Composable () -> Unit) {
+    Column(
+        modifier = modifier
+            .fillMaxWidth()
+            .drawBehind {
+                val x = 2.dp.toPx()
+                drawLine(
+                    color = InsertLineColor.copy(alpha = 0.45f),
+                    start = Offset(x, 12.dp.toPx()),
+                    end = Offset(x, size.height - 12.dp.toPx()),
+                    strokeWidth = 3.dp.toPx(),
+                    cap = StrokeCap.Round
+                )
+            }
+            .padding(start = 14.dp),
+        verticalArrangement = Arrangement.spacedBy(8.dp)
+    ) { content() }
+}
+
+/** 顶部「下一步」提示条：链条推进后的单一焦点 */
+@Composable
+fun NextStepBar(
+    step: NextStep,
+    onCheckIn: () -> Unit,
+    onSkip: () -> Unit,
+    modifier: Modifier = Modifier
+) {
+    Card(
+        modifier = modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(14.dp),
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primaryContainer)
+    ) {
+        Row(
+            Modifier.padding(start = 14.dp, end = 6.dp, top = 12.dp, bottom = 12.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Column(Modifier.weight(1f)) {
+                Text(
+                    "▶ 下一步 · 第 ${step.step}/${step.size} 步",
+                    style = MaterialTheme.typography.labelMedium,
+                    color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.75f)
+                )
+                Spacer(Modifier.height(3.dp))
+                Text(
+                    step.rule.ifText,
+                    style = MaterialTheme.typography.bodyLarge,
+                    fontWeight = FontWeight.Medium,
+                    color = MaterialTheme.colorScheme.onPrimaryContainer
+                )
+                Text(
+                    "接「${step.prevIfText}」之后 → ${step.rule.thenText}",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.8f),
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis
+                )
+            }
+            TextButton(onClick = onCheckIn) { Text("打卡") }
+            TextButton(onClick = onSkip) { Text("跳过") }
+        }
+    }
+}
+
+/** 链条全做齐的一次性反馈条 */
+@Composable
+fun ChainCompleteBar(size: Int, modifier: Modifier = Modifier) {
+    Card(
+        modifier = modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(14.dp),
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primary)
+    ) {
+        Row(Modifier.padding(horizontal = 14.dp, vertical = 12.dp), verticalAlignment = Alignment.CenterVertically) {
+            Text("🎉", style = MaterialTheme.typography.titleLarge)
+            Spacer(Modifier.width(10.dp))
+            Text(
+                "链条完成 · $size 步全做",
+                style = MaterialTheme.typography.titleSmall,
+                color = Color.White
+            )
+        }
+    }
+}
+
+/** 就地展开的链条视图：头→尾清单，可在任意节点处断开 */
+@Composable
+fun ChainViewPanel(
+    path: List<Rule>,
+    offFolder: List<Rule>,
+    folderLabel: (Long?) -> String,
+    onUnlink: (Long) -> Unit,
+    onEdit: (Long) -> Unit,
+    modifier: Modifier = Modifier
+) {
+    Card(
+        modifier = modifier.fillMaxWidth(),
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)
+    ) {
+        Column(Modifier.padding(start = 12.dp, end = 6.dp, top = 6.dp, bottom = 6.dp)) {
+            path.forEachIndexed { i, r ->
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text(
+                        "${i + 1}",
+                        style = MaterialTheme.typography.labelLarge,
+                        color = InsertLineColor,
+                        modifier = Modifier.width(22.dp)
+                    )
+                    Column(Modifier.weight(1f)) {
+                        Text(r.ifText, style = MaterialTheme.typography.bodyMedium, maxLines = 1,
+                            overflow = TextOverflow.Ellipsis)
+                        Text(
+                            "→ ${r.thenText}",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                    }
+                    if (i > 0) {
+                        TextButton(onClick = { onUnlink(r.id) }) {
+                            Text("断开", style = MaterialTheme.typography.labelMedium)
+                        }
+                    }
+                    TextButton(onClick = { onEdit(r.id) }) {
+                        Text("编辑", style = MaterialTheme.typography.labelMedium)
+                    }
+                }
+            }
+            offFolder.forEach { r ->
+                Text(
+                    "↳ 后续「${r.ifText}」在 ${folderLabel(r.folderId)}",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.padding(start = 22.dp, top = 4.dp)
+                )
+            }
+        }
+    }
+}
+
+/** 排序模式的方向控件：⇈ 置顶 ▲ 上移 ▼ 下移 ⇊ 置底，▲▼ 长按连续移动 */
+@Composable
+fun SortPad(
+    label: String,
+    movable: Boolean,
+    canUp: Boolean,
+    canDown: Boolean,
+    onMove: (Int) -> Unit,
+    onEdge: (Boolean) -> Unit,
+    onBlocked: () -> Unit,
+    modifier: Modifier = Modifier
+) {
+    fun dim(up: Boolean) = if (up) canUp else canDown
+    Column(modifier, horizontalAlignment = Alignment.CenterHorizontally) {
+        if (label.isNotEmpty()) {
+            Text(
+                label,
+                style = MaterialTheme.typography.labelMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+            Spacer(Modifier.height(2.dp))
+        }
+        Row(horizontalArrangement = Arrangement.spacedBy(2.dp)) {
+            HoldButton("⇈", "置顶到开头", movable && dim(true), repeat = false) {
+                if (movable) onEdge(true) else onBlocked()
+            }
+            HoldButton("▲", "上移一位", movable && dim(true), repeat = true) {
+                if (movable) onMove(-1) else onBlocked()
+            }
+        }
+        Row(horizontalArrangement = Arrangement.spacedBy(2.dp)) {
+            HoldButton("▼", "下移一位", movable && dim(false), repeat = true) {
+                if (movable) onMove(1) else onBlocked()
+            }
+            HoldButton("⇊", "置底到末尾", movable && dim(false), repeat = false) {
+                if (movable) onEdge(false) else onBlocked()
+            }
+        }
+    }
+}
+
+@Composable
+private fun HoldButton(
+    glyph: String,
+    desc: String,
+    enabled: Boolean,
+    repeat: Boolean,
+    onClick: () -> Unit
+) {
+    val scope = rememberCoroutineScope()
+    Box(
+        modifier = Modifier
+            .size(32.dp)
+            .clip(RoundedCornerShape(8.dp))
+            .background(if (enabled) MaterialTheme.colorScheme.primary.copy(alpha = 0.10f) else Color.Transparent)
+            .semantics { contentDescription = desc }
+            .pointerInput(desc, enabled, repeat) {
+                detectTapGestures(onPress = {
+                    onClick()
+                    if (repeat && enabled) {
+                        val job = scope.launch {
+                            delay(420)
+                            while (true) {
+                                onClick()
+                                delay(115)
+                            }
+                        }
+                        tryAwaitRelease()
+                        job.cancel()
+                    }
+                })
+            },
+        contentAlignment = Alignment.Center
+    ) {
+        Text(
+            glyph,
+            style = MaterialTheme.typography.bodyMedium,
+            color = if (enabled) MaterialTheme.colorScheme.primary
+            else MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.35f)
+        )
     }
 }

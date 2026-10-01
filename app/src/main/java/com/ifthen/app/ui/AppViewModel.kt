@@ -10,6 +10,7 @@ import com.ifthen.app.ai.DeepSeekClient
 import com.ifthen.app.data.ApiSettings
 import com.ifthen.app.data.AppDatabase
 import com.ifthen.app.data.BackupRepository
+import com.ifthen.app.data.Chain
 import com.ifthen.app.data.ExecLog
 import com.ifthen.app.data.Folder
 import com.ifthen.app.data.Rule
@@ -54,7 +55,8 @@ data class AppUiState(
     val heatmap: List<Int> = List(Constants.HEATMAP_DAYS) { 0 },
     val zombies: List<Rule> = emptyList(),
     val highTriggers: List<Rule> = emptyList(),
-    val ruleById: Map<Long, Rule> = emptyMap()
+    val ruleById: Map<Long, Rule> = emptyMap(),
+    val chain: ChainSnapshot = ChainSnapshot()
 )
 
 class AppViewModel(app: Application) : AndroidViewModel(app) {
@@ -181,6 +183,13 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         }
         walk(null, 0)
 
+        val chain = ChainState.compute(
+            allActive = active,
+            inFolder = visibleRules,
+            logs = logs,
+            todayStart = todayStart
+        )
+
         return AppUiState(
             activeRules = active,
             archivedRules = archived,
@@ -196,7 +205,8 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             heatmap = heat,
             zombies = zombies,
             highTriggers = high,
-            ruleById = rules.associateBy { it.id }
+            ruleById = rules.associateBy { it.id },
+            chain = chain
         )
     }
 
@@ -211,8 +221,30 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
 
     // ---- 打卡动作 ----
 
+    /**
+     * 链条今天全做齐时的一次性庆祝事件（头部 id），1.5 秒后自动清空。
+     * 只在实时打卡时触发；晚间补记走 resolveLog，永远静默。
+     */
+    private val _celebrate = MutableStateFlow<Long?>(null)
+    val celebrate: StateFlow<Long?> = _celebrate
+
     fun logDone(ruleId: Long) = viewModelScope.launch(Dispatchers.IO) {
         db.execLogDao().insert(ExecLog(ruleId = ruleId, done = true))
+        val head = chainCompletedHead(ruleId) ?: return@launch
+        SuccessChime.playChain()
+        _celebrate.value = head
+        launch {
+            kotlinx.coroutines.delay(1500)
+            if (_celebrate.value == head) _celebrate.value = null
+        }
+    }
+
+    private suspend fun chainCompletedHead(ruleId: Long): Long? {
+        val active = db.ruleDao().observeAll().first().filter { it.status == RuleStatus.ACTIVE.name }
+        val path = Chain.chains(active).firstOrNull { p -> p.any { it.id == ruleId } } ?: return null
+        val done = db.execLogDao().observeSince(dayStart(System.currentTimeMillis())).first()
+            .filter { it.done == true }.mapTo(HashSet()) { it.ruleId }
+        return path.first().id.takeIf { path.all { it.id in done } }
     }
 
     fun logNotDone(ruleId: Long) = viewModelScope.launch(Dispatchers.IO) {
@@ -245,14 +277,115 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     suspend fun getRule(id: Long): Rule? = db.ruleDao().getById(id)
 
     fun setArchived(rule: Rule, archived: Boolean) = viewModelScope.launch(Dispatchers.IO) {
+        if (archived) spliceOut(rule.id)
         db.ruleDao().update(
             rule.copy(status = if (archived) RuleStatus.ARCHIVED.name else RuleStatus.ACTIVE.name)
         )
     }
 
-    fun deleteRule(rule: Rule) = viewModelScope.launch(Dispatchers.IO) {
+    /** 删除：链条中间的节点被抽走时，前驱直接接上它的后继 */
+    fun deleteRule(rule: Rule, onResult: (String) -> Unit = {}) = viewModelScope.launch(Dispatchers.IO) {
+        val pred = db.ruleDao().predecessorOf(rule.id)
+        val tail = rule.nextRuleId?.let { db.ruleDao().getById(it) }
+        if (pred != null) db.ruleDao().updateNext(pred.id, if (tail != null && tail.status == RuleStatus.ACTIVE.name) tail.id else null)
+        db.execLogDao().deleteForRules(listOf(rule.id))
         db.ruleDao().delete(rule)
+        val msg = if (pred != null && tail != null && tail.id != pred.id) {
+            "已删除 · 链条已接上「${pred.ifText} → ${tail.ifText}」"
+        } else "已删除"
+        kotlinx.coroutines.withContext(Dispatchers.Main) { onResult(msg) }
     }
+
+    /** 把节点从链条里抽走，前后自动接上 */
+    private suspend fun spliceOut(id: Long) {
+        val self = db.ruleDao().getById(id) ?: return
+        db.ruleDao().predecessorOf(id)?.let { db.ruleDao().updateNext(it.id, self.nextRuleId) }
+    }
+
+    // ---- 链条连接 ----
+
+    /** 候选：非自己、无前驱、接上不会成环 */
+    suspend fun linkCandidates(selfId: Long): List<Rule> {
+        val active = db.ruleDao().observeAll().first().filter { it.status == RuleStatus.ACTIVE.name }
+        return Chain.linkCandidates(active, selfId)
+    }
+
+    fun linkNext(fromId: Long, toId: Long?, onResult: (String?) -> Unit = {}) = viewModelScope.launch(Dispatchers.IO) {
+        val active = db.ruleDao().observeAll().first().filter { it.status == RuleStatus.ACTIVE.name }
+        val next = Chain.sanitizedNext(active)
+        if (toId != null) {
+            if (Chain.wouldCycle(fromId, toId, next)) {
+                kotlinx.coroutines.withContext(Dispatchers.Main) { onResult("接上去会形成循环，已拒绝") }
+                return@launch
+            }
+            // 每个节点最多一个前驱：目标已有前驱就把那条边挪走
+            active.firstOrNull { next[it.id] == toId && it.id != fromId }
+                ?.let { db.ruleDao().updateNext(it.id, null) }
+        }
+        db.ruleDao().updateNext(fromId, toId)
+        val size = if (toId == null) 0 else {
+            val reloaded = db.ruleDao().observeAll().first().filter { it.status == RuleStatus.ACTIVE.name }
+            Chain.chains(reloaded).firstOrNull { p -> p.any { it.id == fromId } }?.size ?: 0
+        }
+        val msg = when {
+            toId == null -> "已取消连接"
+            size > Constants.CHAIN_MAX_STEPS -> "已接上 · 这条链已有 $size 步，建议拆成两条"
+            else -> null
+        }
+        kotlinx.coroutines.withContext(Dispatchers.Main) { onResult(msg) }
+    }
+
+    /** 在该节点处断开（切断进入它的那条边）；它自己的后继成为新头部 */
+    fun unlinkAt(ruleId: Long, onResult: (String?) -> Unit = {}) = viewModelScope.launch(Dispatchers.IO) {
+        val pred = db.ruleDao().predecessorOf(ruleId)
+        if (pred == null) {
+            kotlinx.coroutines.withContext(Dispatchers.Main) { onResult("这条就是链条开头，没有可断开的连接") }
+            return@launch
+        }
+        db.ruleDao().updateNext(pred.id, null)
+        kotlinx.coroutines.withContext(Dispatchers.Main) { onResult("已在这里断开") }
+    }
+
+    // ---- 排序 ----
+
+    fun moveRuleStep(ruleId: Long, delta: Int) = reorderRule(ruleId, delta = delta)
+    fun moveRuleToEdge(ruleId: Long, top: Boolean) = reorderRule(ruleId, top = top)
+
+    private fun reorderRule(ruleId: Long, delta: Int = 0, top: Boolean? = null) =
+        viewModelScope.launch(Dispatchers.IO) {
+            val rule = db.ruleDao().getById(ruleId) ?: return@launch
+            val sibs = ArrayList(db.ruleDao().observeAll().first().filter { it.folderId == rule.folderId })
+            val from = sibs.indexOfFirst { it.id == ruleId }
+            if (from < 0) return@launch
+            val to = when {
+                top == true -> 0
+                top == false -> sibs.lastIndex
+                else -> (from + delta).coerceIn(0, sibs.lastIndex)
+            }
+            if (to == from) return@launch
+            sibs.add(to, sibs.removeAt(from))
+            sibs.forEachIndexed { i, s -> if (s.sortOrder != i) db.ruleDao().updateSortOrder(s.id, i) }
+        }
+
+    fun moveFolderStep(folderId: Long, delta: Int) = reorderFolder(folderId, delta = delta)
+    fun moveFolderToEdge(folderId: Long, top: Boolean) = reorderFolder(folderId, top = top)
+
+    private fun reorderFolder(folderId: Long, delta: Int = 0, top: Boolean? = null) =
+        viewModelScope.launch(Dispatchers.IO) {
+            val all = db.folderDao().observeAll().first()
+            val folder = all.firstOrNull { it.id == folderId } ?: return@launch
+            val sibs = ArrayList(all.filter { it.parentId == folder.parentId })
+            val from = sibs.indexOfFirst { it.id == folderId }
+            if (from < 0) return@launch
+            val to = when {
+                top == true -> 0
+                top == false -> sibs.lastIndex
+                else -> (from + delta).coerceIn(0, sibs.lastIndex)
+            }
+            if (to == from) return@launch
+            sibs.add(to, sibs.removeAt(from))
+            sibs.forEachIndexed { i, f -> if (f.sortOrder != i) db.folderDao().update(f.copy(sortOrder = i)) }
+        }
 
     fun moveRule(ruleId: Long, folderId: Long?) = viewModelScope.launch(Dispatchers.IO) {
         db.ruleDao().getById(ruleId)?.let {
@@ -281,8 +414,12 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     fun createFolder(name: String, emoji: String, color: Long) = viewModelScope.launch(Dispatchers.IO) {
+        val parent = currentFolderId.value
         db.folderDao().upsert(
-            Folder(name = name.trim(), emoji = emoji, color = color, parentId = currentFolderId.value)
+            Folder(
+                name = name.trim(), emoji = emoji, color = color, parentId = parent,
+                sortOrder = db.folderDao().maxSortOrder(parent) + 1
+            )
         )
     }
 
@@ -302,9 +439,14 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     fun deleteFolderCascade(folderId: Long) = viewModelScope.launch(Dispatchers.IO) {
         val ids = subtreeIds(folderId)
         val rules = db.ruleDao().rulesInFolders(ids)
+        val doomed = rules.map { it.id }.toSet()
         db.execLogDao().deleteForRules(rules.map { it.id })
         db.ruleDao().deleteByIds(rules.map { it.id })
         ids.forEach { db.folderDao().deleteById(it) }
+        // 存活预案里指向已删节点的链条指针要清掉
+        db.ruleDao().observeAll().first().forEach { r ->
+            r.nextRuleId?.let { if (it in doomed) db.ruleDao().updateNext(r.id, null) }
+        }
         if (currentFolderId.value?.let { it in ids } == true) {
             currentFolderId.value = null
         }

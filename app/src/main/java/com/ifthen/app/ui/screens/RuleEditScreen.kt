@@ -58,6 +58,9 @@ fun RuleEditScreen(
     var loaded by rememberSaveable { mutableStateOf(false) }
     var showDelete by rememberSaveable { mutableStateOf(false) }
     var showFolderPicker by remember { mutableStateOf(false) }
+    var showNextPicker by remember { mutableStateOf(false) }
+    var nextCandidates by remember { mutableStateOf<List<Rule>>(emptyList()) }
+    var nextId by remember { mutableStateOf<Long?>(null) }
     var folderId by remember { mutableStateOf(if (ruleId > 0) null else defaultFolderId) }
     var current by remember { mutableStateOf<Rule?>(null) }
 
@@ -76,9 +79,14 @@ fun RuleEditScreen(
                 thenText = it.thenText
                 tags = it.tags
                 folderId = it.folderId
+                nextId = it.nextRuleId
             }
         }
         loaded = true
+    }
+
+    LaunchedEffect(showNextPicker) {
+        if (showNextPicker) nextCandidates = vm.linkCandidates(ruleId)
     }
 
     val archived = current?.status == RuleStatus.ARCHIVED.name
@@ -131,6 +139,42 @@ fun RuleEditScreen(
                         color = MaterialTheme.colorScheme.primary)
                 }
             }
+            if (ruleId > 0 && loaded) {
+                Card(
+                    colors = CardDefaults.cardColors(
+                        containerColor = MaterialTheme.colorScheme.surfaceVariant
+                    ),
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Row(
+                        Modifier.clickable { showNextPicker = true }
+                            .padding(horizontal = 16.dp, vertical = 14.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Column(Modifier.weight(1f)) {
+                            Text("下一步接哪个预案", style = MaterialTheme.typography.labelLarge)
+                            val nx = nextId?.let { id -> state.ruleById[id] }
+                            Text(
+                                if (nx == null) "没有 · 做完这条就结束" else "→ ${nx.ifText}",
+                                style = MaterialTheme.typography.bodyMedium,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                        Text(
+                            if (nextId == null) "接上 ›" else "更换 ›",
+                            style = MaterialTheme.typography.labelMedium,
+                            color = MaterialTheme.colorScheme.primary
+                        )
+                    }
+                }
+                state.chain.chainPos[ruleId]?.let { pos ->
+                    Text(
+                        "这条排在链条第 ${pos.step}/${pos.size} 步（首页点卡片上的序号可以从这里断开）",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+            }
             Button(
                 onClick = {
                     if (ifText.isBlank() || thenText.isBlank()) {
@@ -139,15 +183,12 @@ fun RuleEditScreen(
                     }
                     val base = current
                     vm.saveRule(
-                        Rule(
-                            id = base?.id ?: 0L,
+                        (base ?: Rule(ifText = "", thenText = "")).copy(
                             ifText = ifText.trim(),
                             thenText = thenText.trim(),
                             tags = tags.trim(),
-                            triggerConfig = base?.triggerConfig,
                             folderId = folderId,
-                            status = base?.status ?: RuleStatus.ACTIVE.name,
-                            createdAt = base?.createdAt ?: System.currentTimeMillis()
+                            nextRuleId = nextId
                         )
                     ) { onDone() }
                 },
@@ -291,6 +332,55 @@ fun RuleEditScreen(
         )
     }
 
+    if (showNextPicker) {
+        AlertDialog(
+            onDismissRequest = { showNextPicker = false },
+            title = { Text("做完这条之后接哪个？") },
+            text = {
+                Column(Modifier.fillMaxWidth()) {
+                    if (nextCandidates.isEmpty()) {
+                        Text(
+                            "没有可接的预案：只有还没被别的预案接住的活跃预案能接上，且接上去不能形成循环。",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                    Column(Modifier.verticalScroll(rememberScrollState())) {
+                        nextCandidates.forEach { c ->
+                            TextButton(
+                                onClick = {
+                                    vm.linkNext(ruleId, c.id) { msg -> msg?.let(onToast) }
+                                    nextId = c.id
+                                    showNextPicker = false
+                                },
+                                modifier = Modifier.fillMaxWidth()
+                            ) {
+                                Text(
+                                    text = "如果 ${c.ifText}" + if (c.id == nextId) "（当前）" else "",
+                                    modifier = Modifier.fillMaxWidth(),
+                                    textAlign = androidx.compose.ui.text.style.TextAlign.Start
+                                )
+                            }
+                        }
+                    }
+                }
+            },
+            confirmButton = {},
+            dismissButton = {
+                Row {
+                    if (nextId != null) {
+                        TextButton(onClick = {
+                            vm.linkNext(ruleId, null) { msg -> msg?.let(onToast) }
+                            nextId = null
+                            showNextPicker = false
+                        }) { Text("取消连接") }
+                    }
+                    TextButton(onClick = { showNextPicker = false }) { Text("关闭") }
+                }
+            }
+        )
+    }
+
     if (showDelete) {
         AlertDialog(
             onDismissRequest = { showDelete = false },
@@ -298,9 +388,13 @@ fun RuleEditScreen(
             text = { Text("这条预案和它的全部打卡记录会被永久删除，无法恢复。") },
             confirmButton = {
                 TextButton(onClick = {
-                    current?.let { vm.deleteRule(it) }
-                    showDelete = false
-                    onDone()
+                    current?.let { r ->
+                        vm.deleteRule(r) { msg ->
+                            showDelete = false
+                            onToast(msg)
+                            onDone()
+                        }
+                    }
                 }) { Text("删除") }
             },
             dismissButton = {

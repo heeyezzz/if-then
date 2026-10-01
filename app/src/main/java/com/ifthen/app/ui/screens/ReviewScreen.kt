@@ -1,6 +1,8 @@
 package com.ifthen.app.ui.screens
 
+import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -9,7 +11,9 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyListScope
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material3.Card
@@ -29,11 +33,15 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.unit.dp
 import androidx.compose.material3.AlertDialog
 import com.ifthen.app.data.ExecLog
+import com.ifthen.app.data.Rule
 import com.ifthen.app.ui.AppUiState
 import com.ifthen.app.ui.AppViewModel
+import com.ifthen.app.ui.ChainHealth
+import com.ifthen.app.ui.ChainState
 import com.ifthen.app.ui.RuleStat
 import com.ifthen.app.ui.components.Heatmap
 import com.ifthen.app.ui.components.SectionHeader
@@ -106,6 +114,13 @@ fun ReviewScreen(
                 }
             }
 
+            if (state.chain.health.isNotEmpty()) {
+                item { SectionHeader("链条健康 · 近 14 天") }
+                items(state.chain.health, key = { "c${it.headId}" }) { h ->
+                    ChainHealthRow(h)
+                }
+            }
+
             item { SectionHeader("全部战绩") }
             state.folderSummaries.forEach { s ->
                 item(key = "fs${s.folder.id}") {
@@ -126,16 +141,10 @@ fun ReviewScreen(
                         )
                     }
                 }
-                state.activeRules.filter { it.folderId == s.folder.id }.forEach { rule ->
-                    item(key = "s${rule.id}") {
-                        val st = state.stats[rule.id] ?: RuleStat()
-                        StatRow(
-                            "  ${rule.ifText}",
-                            "30天触发 ${st.triggers30} · 执行率 ${rateText(st)}",
-                            st.streak
-                        )
-                    }
-                }
+                ruleItemsWithChains(
+                    inFolder = state.activeRules.filter { it.folderId == s.folder.id },
+                    state = state
+                )
             }
             run {
                 val rootRules = state.activeRules.filter { it.folderId == null }
@@ -147,16 +156,7 @@ fun ReviewScreen(
                             modifier = Modifier.padding(top = 8.dp)
                         )
                     }
-                    rootRules.forEach { rule ->
-                        item(key = "s${rule.id}") {
-                            val st = state.stats[rule.id] ?: RuleStat()
-                            StatRow(
-                                "  ${rule.ifText}",
-                                "30天触发 ${st.triggers30} · 执行率 ${rateText(st)}",
-                                st.streak
-                            )
-                        }
-                    }
+                    ruleItemsWithChains(inFolder = rootRules, state = state)
                 }
             }
 
@@ -194,6 +194,111 @@ fun ReviewScreen(
             confirmButton = {},
             dismissButton = { TextButton(onClick = { showPickRule = false }) { Text("取消") } }
         )
+    }
+}
+
+/** 全部战绩里的预案条目：链条成员聚在一起，头部带今日进度 */
+private fun LazyListScope.ruleItemsWithChains(
+    inFolder: List<Rule>,
+    state: AppUiState
+) {
+    ChainState.groupsOf(inFolder, state.activeRules).forEach { g ->
+        val head = g.rules.first()
+        val today = state.chain.todayByHead[head.id]
+        val chained = g.rules.size > 1
+        if (chained && today != null) {
+            item(key = "cl${head.id}") {
+                Text(
+                    "链 · ${today.size} 步 今天 ${today.doneToday}/${today.size}" +
+                        if (today.doneToday == today.size) " ✅" else "",
+                    style = MaterialTheme.typography.labelMedium,
+                    color = MaterialTheme.colorScheme.primary,
+                    modifier = Modifier.padding(start = 18.dp, top = 4.dp)
+                )
+            }
+        }
+        g.rules.forEachIndexed { i, rule ->
+            item(key = "s${rule.id}") {
+                val st = state.stats[rule.id] ?: RuleStat()
+                val step = state.chain.chainPos[rule.id]?.step ?: (i + 1)
+                StatRow(
+                    "  " + (if (chained) "${circled(step)} " else "") + rule.ifText,
+                    "30天触发 ${st.triggers30} · 执行率 ${rateText(st)}",
+                    st.streak
+                )
+            }
+        }
+        g.offFolderTails.forEach { t ->
+            item(key = "xt${t.id}") {
+                Text(
+                    "↳ 后续「${t.ifText}」在别的文件夹里",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.padding(start = 22.dp)
+                )
+            }
+        }
+    }
+}
+
+private fun circled(n: Int): String =
+    if (n in 1..8) "①②③④⑤⑥⑦⑧"[n - 1].toString() else "$n."
+
+/** 链条健康：近 14 天走通次数 + 最常断在第几步 */
+@Composable
+private fun ChainHealthRow(h: ChainHealth) {
+    Card(
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant),
+        modifier = Modifier.fillMaxWidth()
+    ) {
+        Column(Modifier.padding(14.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text(h.title, style = MaterialTheme.typography.bodyMedium, modifier = Modifier.weight(1f))
+                Text(
+                    "走通 ${h.fullDays}/${h.activeDays} 天",
+                    style = MaterialTheme.typography.labelMedium,
+                    color = if (h.fullDays > 0) MaterialTheme.colorScheme.primary
+                    else MaterialTheme.colorScheme.tertiary
+                )
+            }
+            Spacer(Modifier.height(8.dp))
+            Row(
+                horizontalArrangement = Arrangement.spacedBy(6.dp),
+                verticalAlignment = Alignment.Bottom,
+                modifier = Modifier.height(30.dp)
+            ) {
+                h.breakAt.forEachIndexed { i, c ->
+                    Column(
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                        verticalArrangement = Arrangement.Bottom,
+                        modifier = Modifier.weight(1f)
+                    ) {
+                        Box(
+                            Modifier
+                                .fillMaxWidth()
+                                .height((4 + c * 6).dp.coerceAtMost(22.dp))
+                                .clip(RoundedCornerShape(3.dp))
+                                .background(
+                                    MaterialTheme.colorScheme.primary
+                                        .copy(alpha = if (c == 0) 0.16f else 0.62f)
+                                )
+                        )
+                        Text(
+                            circled(i + 1),
+                            style = MaterialTheme.typography.labelSmall,
+                            color = if (i + 1 == h.worstStep) MaterialTheme.colorScheme.tertiary
+                            else MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                }
+            }
+            Text(
+                if (h.worstStep > 0) "最常断在第 ${h.worstStep} 步 — 那一步在现实中接不上，考虑改掉它"
+                else "14 天里没有断点",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+        }
     }
 }
 

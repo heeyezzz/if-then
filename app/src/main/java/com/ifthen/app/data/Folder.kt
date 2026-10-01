@@ -12,5 +12,6 @@ data class Folder(
     val emoji: String = "📁",
     val color: Long = 0xFF1F6E5C,
     val parentId: Long? = null,
+    val sortOrder: Int = 0,
     val createdAt: Long = System.currentTimeMillis()
 )

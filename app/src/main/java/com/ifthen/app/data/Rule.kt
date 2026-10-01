@@ -17,6 +17,8 @@ data class Rule(
     val triggerConfig: String? = null,
     val folderId: Long? = null,
     val sortOrder: Int = 0,
+    // 链条：做完这条之后接哪条。null = 这条不是任何链条的中间节点
+    val nextRuleId: Long? = null,
     val status: String = RuleStatus.ACTIVE.name,
     val createdAt: Long = System.currentTimeMillis()
 )
