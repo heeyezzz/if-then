@@ -121,6 +121,38 @@ fun ReviewScreen(
                 }
             }
 
+            run {
+                val s = state.oneOffStats
+                if (s.done + s.missed > 0 || s.pending > 0) {
+                    item { SectionHeader("一次性 · 战绩") }
+                    item {
+                        Card(
+                            colors = CardDefaults.cardColors(
+                                containerColor = MaterialTheme.colorScheme.surfaceVariant
+                            ),
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Column(Modifier.padding(14.dp)) {
+                                Row(horizontalArrangement = Arrangement.spacedBy(18.dp)) {
+                                    OneOffStat("完成", s.done, MaterialTheme.colorScheme.primary)
+                                    OneOffStat("落空", s.missed, MaterialTheme.colorScheme.tertiary)
+                                    OneOffStat("待办", s.pending, MaterialTheme.colorScheme.onSurface)
+                                    OneOffStat("逾期", s.overdue, MaterialTheme.colorScheme.error)
+                                }
+                                Spacer(Modifier.height(8.dp))
+                                Text(
+                                    s.rate?.let {
+                                        "近 30 天完成率 $it% — 订了又没做的越少，说明预案订得越准"
+                                    } ?: "近 30 天还没有结清记录",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
+                        }
+                    }
+                }
+            }
+
             item { SectionHeader("全部战绩") }
             state.folderSummaries.forEach { s ->
                 item(key = "fs${s.folder.id}") {
@@ -302,8 +334,7 @@ private fun ChainHealthRow(h: ChainHealth) {
     }
 }
 
-private fun rateText(s: RuleStat): String =
-    if (s.triggers30 == 0) "—" else "${s.done30 * 100 / s.triggers30}%"
+private fun rateText(s: RuleStat): String =    if (s.triggers30 == 0) "—" else "${s.done30 * 100 / s.triggers30}%"
 
 @Composable
 private fun TodayLogRow(log: ExecLog, ruleIf: String, onResolve: (Boolean) -> Unit, onDelete: () -> Unit) {
@@ -333,6 +364,18 @@ private fun TodayLogRow(log: ExecLog, ruleIf: String, onResolve: (Boolean) -> Un
                     tint = MaterialTheme.colorScheme.onSurfaceVariant)
             }
         }
+    }
+}
+
+@Composable
+private fun OneOffStat(label: String, value: Int, color: androidx.compose.ui.graphics.Color) {
+    Column {
+        Text("$value", style = MaterialTheme.typography.titleLarge, color = color)
+        Text(
+            label,
+            style = MaterialTheme.typography.labelSmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant
+        )
     }
 }
 

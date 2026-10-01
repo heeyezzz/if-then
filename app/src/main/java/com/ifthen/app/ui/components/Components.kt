@@ -271,6 +271,10 @@ fun SwipeRuleCard(
     stepExpanded: Boolean = false,
     onStepClick: (() -> Unit)? = null,
     swipeEnabled: Boolean = true,
+    overdueDays: Int? = null,
+    dueLabel: String? = null,
+    moveLabel: String = "移夹",
+    moveIcon: androidx.compose.ui.graphics.vector.ImageVector = Icons.Filled.DriveFileMove,
     cardModifier: Modifier = Modifier,
     modifier: Modifier = Modifier
 ) {
@@ -357,7 +361,7 @@ fun SwipeRuleCard(
             RoundAction("没做", ActionMiss, Icons.Filled.Close) {
                 onMiss(); scope.launch { offsetX.animateTo(0f, spring()) }; onReveal(null)
             }
-            RoundAction("移夹", ActionMove, Icons.Filled.DriveFileMove) {
+            RoundAction(moveLabel, ActionMove, moveIcon) {
                 scope.launch { offsetX.animateTo(0f, spring()) }; onReveal(null); onMove()
             }
             RoundAction("归档", ActionArchive, Icons.Filled.Archive) {
@@ -400,7 +404,16 @@ fun SwipeRuleCard(
                         tone = TagTone.Condition,
                         text = rule.ifText,
                         style = MaterialTheme.typography.bodyLarge,
-                        color = MaterialTheme.colorScheme.onSurface
+                        color = MaterialTheme.colorScheme.onSurface,
+                        trailing = overdueDays?.let { days ->
+                            {
+                                Text(
+                                    "逾期 $days 天",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = MaterialTheme.colorScheme.error
+                                )
+                            }
+                        }
                     )
                     TaggedLine(
                         tag = "就",
@@ -408,7 +421,15 @@ fun SwipeRuleCard(
                         text = rule.thenText,
                         style = MaterialTheme.typography.bodyMedium,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        trailing = { StreakChip(stat.streak) }
+                        trailing = dueLabel?.let { label ->
+                            {
+                                Text(
+                                    label,
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
+                        } ?: { StreakChip(stat.streak) }
                     )
                 }
             }

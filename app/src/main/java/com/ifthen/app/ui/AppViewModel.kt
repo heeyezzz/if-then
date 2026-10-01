@@ -14,7 +14,10 @@ import com.ifthen.app.data.Chain
 import com.ifthen.app.data.ExecLog
 import com.ifthen.app.data.Folder
 import com.ifthen.app.data.Rule
+import com.ifthen.app.data.RuleKind
 import com.ifthen.app.data.RuleStatus
+import com.ifthen.app.data.isOneOff
+import com.ifthen.app.data.isResolved
 import com.ifthen.app.data.SettingsRepository
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -40,9 +43,22 @@ data class FolderSummary(
     val done30: Int
 )
 
+data class OneOffStats(
+    val done: Int,
+    val missed: Int,
+    val pending: Int,
+    val overdue: Int
+) {
+    val rate: Int? get() = if (done + missed == 0) null else done * 100 / (done + missed)
+}
+
 data class AppUiState(
     val activeRules: List<Rule> = emptyList(),
     val archivedRules: List<Rule> = emptyList(),
+    val oneOffActive: List<Rule> = emptyList(),
+    val oneOffResolvedToday: List<Rule> = emptyList(),
+    val oneOffOverdueDays: Map<Long, Int> = emptyMap(),
+    val oneOffStats: OneOffStats = OneOffStats(0, 0, 0, 0),
     val folders: List<Folder> = emptyList(),
     val currentFolderId: Long? = null,
     val crumbs: List<Folder> = emptyList(),
@@ -97,8 +113,10 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         ts: Long,
         folderId: Long?
     ): AppUiState {
-        val active = rules.filter { it.status == RuleStatus.ACTIVE.name }
-        val archived = rules.filter { it.status != RuleStatus.ACTIVE.name }
+        val activeAll = rules.filter { it.status == RuleStatus.ACTIVE.name }
+        // 长期清单才是"战绩/链条/文件夹"的主场；一次性另成一页
+        val active = activeAll.filterNot { it.isOneOff }
+        val archived = rules.filter { it.status == RuleStatus.ARCHIVED.name }
         val byRule = logs.groupBy { it.ruleId }
         val dayMs = 24L * 3600_000
         val since30 = ts - Constants.RULE_STATS_WINDOW_DAYS * dayMs
@@ -143,6 +161,27 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
 
         val todayStart = dayStart(ts)
         val todayLogs = logs.filter { it.createdAt >= todayStart }
+
+        // 一次性：未逾期按手动顺序，逾期统一沉底（刚逾期的排在沉底区上方，更可能还来得及）
+        val oneOffAll = activeAll.filter { it.isOneOff }
+        val onTime = oneOffAll.filter { it.dueDate == null || it.dueDate!! >= todayStart }.sortedBy { it.sortOrder }
+        val late = oneOffAll.filter { it.dueDate != null && it.dueDate!! < todayStart }
+            .sortedByDescending { it.dueDate }
+        val resolvedOneOff = rules.filter { it.isOneOff && it.isResolved }
+        val oneOffResolvedToday = resolvedOneOff
+            .mapNotNull { r -> byRule[r.id]?.firstOrNull()?.let { l -> r to l } }
+            .filter { it.second.createdAt >= todayStart }
+            .sortedByDescending { it.second.createdAt }
+            .map { it.first }
+        val oneOffWindow = ts - Constants.RULE_STATS_WINDOW_DAYS * dayMs
+        var od = 0
+        var om = 0
+        resolvedOneOff.forEach { r ->
+            val l = byRule[r.id]?.firstOrNull() ?: return@forEach
+            if (l.createdAt < oneOffWindow) return@forEach
+            if (r.status == RuleStatus.DONE.name) od++ else om++
+        }
+        val oneOffStats = OneOffStats(od, om, oneOffAll.size, late.size)
         val heat = ArrayList<Int>(Constants.HEATMAP_DAYS)
         for (i in Constants.HEATMAP_DAYS - 1 downTo 0) {
             val d0 = todayStart - i * dayMs
@@ -193,6 +232,10 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         return AppUiState(
             activeRules = active,
             archivedRules = archived,
+            oneOffActive = onTime + late,
+            oneOffResolvedToday = oneOffResolvedToday,
+            oneOffOverdueDays = late.associate { it.id to ((todayStart - it.dueDate!!) / dayMs).toInt() + 1 },
+            oneOffStats = oneOffStats,
             folders = folders,
             currentFolderId = folderId,
             crumbs = crumbs,
@@ -230,6 +273,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
 
     fun logDone(ruleId: Long) = viewModelScope.launch(Dispatchers.IO) {
         db.execLogDao().insert(ExecLog(ruleId = ruleId, done = true))
+        resolveOneOff(ruleId, true)
         val head = chainCompletedHead(ruleId) ?: return@launch
         SuccessChime.playChain()
         _celebrate.value = head
@@ -239,16 +283,56 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
+    fun logNotDone(ruleId: Long) = viewModelScope.launch(Dispatchers.IO) {
+        db.execLogDao().insert(ExecLog(ruleId = ruleId, done = false))
+        resolveOneOff(ruleId, false)
+    }
+
+    /** 一次性预案打完即结清：情境只来一次，做了/没做都当场落定 */
+    private suspend fun resolveOneOff(ruleId: Long, done: Boolean) {
+        val r = db.ruleDao().getById(ruleId) ?: return
+        if (!r.isOneOff) return
+        db.ruleDao().update(
+            r.copy(status = if (done) RuleStatus.DONE.name else RuleStatus.MISSED.name)
+        )
+    }
+
+    /** 反悔：把结清的一次性预案挂回清单。打卡记录保留——它确实发生过 */
+    fun reopenRule(ruleId: Long, onResult: (String) -> Unit = {}) = viewModelScope.launch(Dispatchers.IO) {
+        val r = db.ruleDao().getById(ruleId) ?: return@launch
+        db.ruleDao().update(r.copy(status = RuleStatus.ACTIVE.name))
+        kotlinx.coroutines.withContext(Dispatchers.Main) { onResult("已重新挂回一次性清单") }
+    }
+
+    /** 改类型：转一次性时若正卡在链条里，自动把它摘出去（前后直接接上） */
+    fun convertKind(ruleId: Long, toOneOff: Boolean, onResult: (String) -> Unit = {}) =
+        viewModelScope.launch(Dispatchers.IO) {
+            val r = db.ruleDao().getById(ruleId) ?: return@launch
+            val msg = if (toOneOff) {
+                val splice = spliceOut(ruleId)
+                db.ruleDao().update(
+                    r.copy(kind = RuleKind.ONE_OFF.name, nextRuleId = null, status = RuleStatus.ACTIVE.name)
+                )
+                "已改为一次性" + (splice?.let { " · $it" } ?: "")
+            } else {
+                db.ruleDao().update(
+                    r.copy(
+                        kind = RuleKind.REPEATING.name,
+                        dueDate = null,
+                        status = RuleStatus.ACTIVE.name
+                    )
+                )
+                "已改为长期预案，在根目录清单里"
+            }
+            kotlinx.coroutines.withContext(Dispatchers.Main) { onResult(msg) }
+        }
+
     private suspend fun chainCompletedHead(ruleId: Long): Long? {
         val active = db.ruleDao().observeAll().first().filter { it.status == RuleStatus.ACTIVE.name }
         val path = Chain.chains(active).firstOrNull { p -> p.any { it.id == ruleId } } ?: return null
         val done = db.execLogDao().observeSince(dayStart(System.currentTimeMillis())).first()
             .filter { it.done == true }.mapTo(HashSet()) { it.ruleId }
         return path.first().id.takeIf { path.all { it.id in done } }
-    }
-
-    fun logNotDone(ruleId: Long) = viewModelScope.launch(Dispatchers.IO) {
-        db.execLogDao().insert(ExecLog(ruleId = ruleId, done = false))
     }
 
     /** 晚上补记：先记一条「待定」，之后再标做了/没做 */
@@ -296,22 +380,28 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         kotlinx.coroutines.withContext(Dispatchers.Main) { onResult(msg) }
     }
 
-    /** 把节点从链条里抽走，前后自动接上 */
-    private suspend fun spliceOut(id: Long) {
-        val self = db.ruleDao().getById(id) ?: return
-        db.ruleDao().predecessorOf(id)?.let { db.ruleDao().updateNext(it.id, self.nextRuleId) }
+    /** 把节点从链条里抽走，前后自动接上；返回给用户看的一句说明 */
+    private suspend fun spliceOut(id: Long): String? {
+        val self = db.ruleDao().getById(id) ?: return null
+        val pred = db.ruleDao().predecessorOf(id) ?: return null
+        val tail = self.nextRuleId?.let { db.ruleDao().getById(it) }
+        db.ruleDao().updateNext(pred.id, tail?.id)
+        return tail?.let { "已从链条摘出「${pred.ifText} → ${it.ifText}」" }
+            ?: "已从链条摘出「${pred.ifText}」之后"
     }
 
     // ---- 链条连接 ----
 
-    /** 候选：非自己、无前驱、接上不会成环 */
+    /** 候选：非自己、无前驱、接上不会成环；一次性预案不参与链条 */
     suspend fun linkCandidates(selfId: Long): List<Rule> {
-        val active = db.ruleDao().observeAll().first().filter { it.status == RuleStatus.ACTIVE.name }
+        val active = db.ruleDao().observeAll().first()
+            .filter { it.status == RuleStatus.ACTIVE.name && !it.isOneOff }
         return Chain.linkCandidates(active, selfId)
     }
 
     fun linkNext(fromId: Long, toId: Long?, onResult: (String?) -> Unit = {}) = viewModelScope.launch(Dispatchers.IO) {
-        val active = db.ruleDao().observeAll().first().filter { it.status == RuleStatus.ACTIVE.name }
+        val active = db.ruleDao().observeAll().first()
+            .filter { it.status == RuleStatus.ACTIVE.name && !it.isOneOff }
         val next = Chain.sanitizedNext(active)
         if (toId != null) {
             if (Chain.wouldCycle(fromId, toId, next)) {
@@ -324,7 +414,8 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         }
         db.ruleDao().updateNext(fromId, toId)
         val size = if (toId == null) 0 else {
-            val reloaded = db.ruleDao().observeAll().first().filter { it.status == RuleStatus.ACTIVE.name }
+            val reloaded = db.ruleDao().observeAll().first()
+                .filter { it.status == RuleStatus.ACTIVE.name && !it.isOneOff }
             Chain.chains(reloaded).firstOrNull { p -> p.any { it.id == fromId } }?.size ?: 0
         }
         val msg = when {
@@ -354,7 +445,13 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     private fun reorderRule(ruleId: Long, delta: Int = 0, top: Boolean? = null) =
         viewModelScope.launch(Dispatchers.IO) {
             val rule = db.ruleDao().getById(ruleId) ?: return@launch
-            val sibs = ArrayList(db.ruleDao().observeAll().first().filter { it.folderId == rule.folderId })
+            // 只在同一层「看得见的」条目之间移动：已归档和已结清的不参与换位
+            val sibs = ArrayList(
+                db.ruleDao().observeAll().first().filter {
+                    it.folderId == rule.folderId && it.kind == rule.kind &&
+                        it.status == RuleStatus.ACTIVE.name
+                }
+            )
             val from = sibs.indexOfFirst { it.id == ruleId }
             if (from < 0) return@launch
             val to = when {
@@ -398,14 +495,18 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
-    fun addCandidates(candidates: List<AiCandidate>, folderId: Long?) = viewModelScope.launch(Dispatchers.IO) {
-        var order = db.ruleDao().maxSortOrder(folderId) + 1
-        candidates.forEach { c ->
-            db.ruleDao().upsert(
-                Rule(ifText = c.ifText, thenText = c.thenText, folderId = folderId, sortOrder = order++)
-            )
+    fun addCandidates(candidates: List<AiCandidate>, folderId: Long?, kind: String) =
+        viewModelScope.launch(Dispatchers.IO) {
+            var order = db.ruleDao().maxSortOrder(folderId) + 1
+            candidates.forEach { c ->
+                db.ruleDao().upsert(
+                    Rule(
+                        ifText = c.ifText, thenText = c.thenText,
+                        folderId = folderId, sortOrder = order++, kind = kind
+                    )
+                )
+            }
         }
-    }
 
     // ---- 文件夹动作 ----
 

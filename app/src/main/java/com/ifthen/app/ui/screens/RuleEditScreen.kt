@@ -18,12 +18,18 @@ import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.Checkbox
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.DatePicker
+import androidx.compose.material3.DatePickerDialog
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.SegmentedButton
+import androidx.compose.material3.SegmentedButtonDefaults
+import androidx.compose.material3.SingleChoiceSegmentedButtonRow
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
+import androidx.compose.material3.rememberDatePickerState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
@@ -39,14 +45,34 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import com.ifthen.app.ai.AiCandidate
 import com.ifthen.app.data.Rule
+import com.ifthen.app.data.RuleKind
 import com.ifthen.app.data.RuleStatus
+import com.ifthen.app.data.isResolved
 import com.ifthen.app.ui.AppViewModel
+import java.text.SimpleDateFormat
+import java.util.Calendar
+import java.util.Date
+import java.util.Locale
+import java.util.TimeZone
 
+private val editDueFmt = SimpleDateFormat("yyyy年M月d日", Locale.CHINA)
+
+/** 日期选择器给的是 UTC 零点，换算成本地当天 0 点再存 */
+private fun utcMidnightToLocalDay(utc: Long): Long {
+    val src = Calendar.getInstance(TimeZone.getTimeZone("UTC")).apply { timeInMillis = utc }
+    return Calendar.getInstance().apply {
+        clear()
+        set(src.get(Calendar.YEAR), src.get(Calendar.MONTH), src.get(Calendar.DAY_OF_MONTH))
+    }.timeInMillis
+}
+
+@OptIn(androidx.compose.material3.ExperimentalMaterial3Api::class)
 @Composable
 fun RuleEditScreen(
     vm: AppViewModel,
     ruleId: Long,
     defaultFolderId: Long?,
+    defaultKind: String,
     state: com.ifthen.app.ui.AppUiState,
     onDone: () -> Unit,
     onToast: (String) -> Unit,
@@ -59,8 +85,11 @@ fun RuleEditScreen(
     var showDelete by rememberSaveable { mutableStateOf(false) }
     var showFolderPicker by remember { mutableStateOf(false) }
     var showNextPicker by remember { mutableStateOf(false) }
+    var showDuePicker by remember { mutableStateOf(false) }
     var nextCandidates by remember { mutableStateOf<List<Rule>>(emptyList()) }
     var nextId by remember { mutableStateOf<Long?>(null) }
+    var kind by remember { mutableStateOf(defaultKind) }
+    var dueDate by remember { mutableStateOf<Long?>(null) }
     var folderId by remember { mutableStateOf(if (ruleId > 0) null else defaultFolderId) }
     var current by remember { mutableStateOf<Rule?>(null) }
 
@@ -80,6 +109,8 @@ fun RuleEditScreen(
                 tags = it.tags
                 folderId = it.folderId
                 nextId = it.nextRuleId
+                kind = it.kind
+                dueDate = it.dueDate
             }
         }
         loaded = true
@@ -91,6 +122,11 @@ fun RuleEditScreen(
 
     val archived = current?.status == RuleStatus.ARCHIVED.name
 
+    fun switchKind(toOneOff: Boolean) {
+        if (ruleId > 0) vm.convertKind(ruleId, toOneOff) { onToast(it) }
+        kind = if (toOneOff) RuleKind.ONE_OFF.name else RuleKind.REPEATING.name
+    }
+
     Surface(modifier = modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
         Column(
             modifier = Modifier.fillMaxSize().verticalScroll(rememberScrollState())
@@ -100,6 +136,25 @@ fun RuleEditScreen(
             Text(
                 if (ruleId > 0) "编辑预案" else "新建预案",
                 style = MaterialTheme.typography.headlineSmall
+            )
+            val oneOff = kind == RuleKind.ONE_OFF.name
+            SingleChoiceSegmentedButtonRow(Modifier.fillMaxWidth()) {
+                SegmentedButton(
+                    selected = !oneOff,
+                    onClick = { if (oneOff) switchKind(false) },
+                    shape = SegmentedButtonDefaults.itemShape(index = 0, count = 2)
+                ) { Text("长期") }
+                SegmentedButton(
+                    selected = oneOff,
+                    onClick = { if (!oneOff) switchKind(true) },
+                    shape = SegmentedButtonDefaults.itemShape(index = 1, count = 2)
+                ) { Text("一次性") }
+            }
+            Text(
+                if (oneOff) "情境只来一次：做完或没做都当场结清，然后从清单消失"
+                else "反复照案执行：留在清单里，触发一次打卡一次",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
             )
             OutlinedTextField(
                 value = ifText,
@@ -115,31 +170,62 @@ fun RuleEditScreen(
                 modifier = Modifier.fillMaxWidth(),
                 minLines = 2
             )
-            Card(
-                colors = CardDefaults.cardColors(
-                    containerColor = MaterialTheme.colorScheme.surfaceVariant
-                ),
-                modifier = Modifier.fillMaxWidth()
-            ) {
-                Row(
-                    Modifier.clickable { showFolderPicker = true }
-                        .padding(horizontal = 16.dp, vertical = 14.dp),
-                    verticalAlignment = Alignment.CenterVertically
+            if (!oneOff) {
+                Card(
+                    colors = CardDefaults.cardColors(
+                        containerColor = MaterialTheme.colorScheme.surfaceVariant
+                    ),
+                    modifier = Modifier.fillMaxWidth()
                 ) {
-                    Column(Modifier.weight(1f)) {
-                        Text("所在文件夹", style = MaterialTheme.typography.labelLarge)
-                        val f = state.folders.firstOrNull { it.id == folderId }
-                        Text(
-                            if (f == null) "根目录" else "${f.emoji}${f.name}",
-                            style = MaterialTheme.typography.bodyMedium,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
+                    Row(
+                        Modifier.clickable { showFolderPicker = true }
+                            .padding(horizontal = 16.dp, vertical = 14.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Column(Modifier.weight(1f)) {
+                            Text("所在文件夹", style = MaterialTheme.typography.labelLarge)
+                            val f = state.folders.firstOrNull { it.id == folderId }
+                            Text(
+                                if (f == null) "根目录" else "${f.emoji}${f.name}",
+                                style = MaterialTheme.typography.bodyMedium,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                        Text("更换 ›", style = MaterialTheme.typography.labelMedium,
+                            color = MaterialTheme.colorScheme.primary)
                     }
-                    Text("更换 ›", style = MaterialTheme.typography.labelMedium,
-                        color = MaterialTheme.colorScheme.primary)
                 }
             }
-            if (ruleId > 0 && loaded) {
+            if (oneOff) {
+                Card(
+                    colors = CardDefaults.cardColors(
+                        containerColor = MaterialTheme.colorScheme.surfaceVariant
+                    ),
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Row(
+                        Modifier.clickable { showDuePicker = true }
+                            .padding(horizontal = 16.dp, vertical = 14.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Column(Modifier.weight(1f)) {
+                            Text("哪天之前", style = MaterialTheme.typography.labelLarge)
+                            Text(
+                                dueDate?.let { "${editDueFmt.format(java.util.Date(it))} 前" }
+                                    ?: "不限 · 情境出现就做",
+                                style = MaterialTheme.typography.bodyMedium,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                        Text(
+                            if (dueDate == null) "设定 ›" else "更换 ›",
+                            style = MaterialTheme.typography.labelMedium,
+                            color = MaterialTheme.colorScheme.primary
+                        )
+                    }
+                }
+            }
+            if (ruleId > 0 && loaded && !oneOff) {
                 Card(
                     colors = CardDefaults.cardColors(
                         containerColor = MaterialTheme.colorScheme.surfaceVariant
@@ -188,7 +274,9 @@ fun RuleEditScreen(
                             thenText = thenText.trim(),
                             tags = tags.trim(),
                             folderId = folderId,
-                            nextRuleId = nextId
+                            nextRuleId = if (oneOff) null else nextId,
+                            kind = kind,
+                            dueDate = if (oneOff) dueDate else null
                         )
                     ) { onDone() }
                 },
@@ -211,6 +299,12 @@ fun RuleEditScreen(
                         modifier = Modifier.weight(1f)
                     ) { Text("彻底删除") }
                 }
+            }
+            if (current?.isResolved == true) {
+                OutlinedButton(
+                    onClick = { vm.reopenRule(ruleId) { onToast(it); onDone() } },
+                    modifier = Modifier.fillMaxWidth()
+                ) { Text("重新挂起为待结清") }
             }
 
             Spacer(Modifier.height(8.dp))
@@ -281,7 +375,7 @@ fun RuleEditScreen(
                             enabled = checked.values.count { it } > 0,
                             onClick = {
                                 val picked = candidates.filterIndexed { i, _ -> checked[i] == true }
-                                vm.addCandidates(picked, folderId)
+                                vm.addCandidates(picked, folderId, kind)
                                 candidates.clear()
                                 checked.clear()
                                 onToast("已入库 ${picked.size} 条")
@@ -379,6 +473,37 @@ fun RuleEditScreen(
                 }
             }
         )
+    }
+
+    if (showDuePicker) {
+        val dateState = rememberDatePickerState(
+            initialSelectedDateMillis = dueDate?.let {
+                java.util.Calendar.getInstance(java.util.TimeZone.getTimeZone("UTC")).apply {
+                    timeInMillis = it
+                    set(java.util.Calendar.HOUR_OF_DAY, 0); set(java.util.Calendar.MINUTE, 0)
+                    set(java.util.Calendar.SECOND, 0); set(java.util.Calendar.MILLISECOND, 0)
+                }.timeInMillis
+            }
+        )
+        DatePickerDialog(
+            onDismissRequest = { showDuePicker = false },
+            confirmButton = {
+                TextButton(onClick = {
+                    dateState.selectedDateMillis?.let { dueDate = utcMidnightToLocalDay(it) }
+                    showDuePicker = false
+                }) { Text("确定") }
+            },
+            dismissButton = {
+                Row {
+                    if (dueDate != null) {
+                        TextButton(onClick = { dueDate = null; showDuePicker = false }) { Text("不限") }
+                    }
+                    TextButton(onClick = { showDuePicker = false }) { Text("取消") }
+                }
+            }
+        ) {
+            DatePicker(state = dateState)
+        }
     }
 
     if (showDelete) {

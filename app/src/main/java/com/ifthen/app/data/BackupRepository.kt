@@ -8,7 +8,7 @@ import kotlinx.serialization.json.Json
 
 @Serializable
 data class BackupPayload(
-    val version: Int = 3,
+    val version: Int = 4,
     val exportedAt: Long = System.currentTimeMillis(),
     val folders: List<Folder> = emptyList(),
     val rules: List<Rule>,
@@ -41,8 +41,16 @@ class BackupRepository(private val context: Context) {
         val payload = json.decodeFromString(BackupPayload.serializer(), text)
         val db = AppDatabase.get(context)
         // 导入的链条指针可能悬空、分叉或成环，按 Chain 的规则重建
-        val next = Chain.sanitizedNext(payload.rules)
-        val rules = payload.rules.map { it.copy(nextRuleId = next[it.id]) }
+        val knownStatus = RuleStatus.entries.map { it.name }.toSet()
+        val knownKind = RuleKind.entries.map { it.name }.toSet()
+        val normalized = payload.rules.map { r ->
+            r.copy(
+                status = if (r.status in knownStatus) r.status else RuleStatus.ACTIVE.name,
+                kind = if (r.kind in knownKind) r.kind else RuleKind.REPEATING.name
+            )
+        }
+        val next = Chain.sanitizedNext(normalized.filterNot { it.isOneOff })
+        val rules = normalized.map { it.copy(nextRuleId = if (it.isOneOff) null else next[it.id]) }
         db.execLogDao().deleteAll()
         db.ruleDao().deleteAll()
         db.folderDao().deleteAll()
