@@ -271,6 +271,7 @@ fun SwipeRuleCard(
     stepExpanded: Boolean = false,
     onStepClick: (() -> Unit)? = null,
     swipeEnabled: Boolean = true,
+    onMiniDone: (() -> Unit)? = null,
     overdueDays: Int? = null,
     dueLabel: String? = null,
     moveLabel: String = "移夹",
@@ -431,6 +432,49 @@ fun SwipeRuleCard(
                             }
                         } ?: { StreakChip(stat.streak) }
                     )
+                    if (rule.miniThen.isNotBlank() && onMiniDone != null) {
+                        Row(
+                            Modifier
+                                .clip(RoundedCornerShape(8.dp))
+                                .clickable { onMiniDone() }
+                                .padding(vertical = 4.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Box(
+                                Modifier.width(TagColumnWidth),
+                                contentAlignment = Alignment.CenterStart
+                            ) {
+                                Text(
+                                    "2min",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    fontWeight = FontWeight.SemiBold,
+                                    color = MaterialTheme.colorScheme.primary,
+                                    modifier = Modifier
+                                        .clip(RoundedCornerShape(6.dp))
+                                        .border(
+                                            1.dp,
+                                            MaterialTheme.colorScheme.primary.copy(alpha = 0.35f),
+                                            RoundedCornerShape(6.dp)
+                                        )
+                                        .padding(horizontal = 5.dp, vertical = 1.dp)
+                                )
+                            }
+                            Text(
+                                rule.miniThen,
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                maxLines = 2,
+                                overflow = TextOverflow.Ellipsis,
+                                modifier = Modifier.weight(1f)
+                            )
+                            Text(
+                                "做这个",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.primary,
+                                modifier = Modifier.padding(start = 8.dp)
+                            )
+                        }
+                    }
                 }
             }
         }

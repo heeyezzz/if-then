@@ -96,7 +96,23 @@ fun ReviewScreen(
             }
 
             item { SectionHeader("最近 30 天") }
-            item { Card(Modifier.fillMaxWidth()) { Heatmap(state.heatmap, Modifier.padding(12.dp)) } }
+            item {
+                Card(Modifier.fillMaxWidth()) {
+                    Column(Modifier.padding(12.dp)) {
+                        Heatmap(state.heatmap)
+                        if (state.totalDone30 > 0) {
+                            Spacer(Modifier.height(8.dp))
+                            Text(
+                                if (state.miniDone30 == 0) "30 天 ${state.totalDone30} 次打卡，每次都做了完整版"
+                                else "30 天 ${state.totalDone30} 次打卡，其中 ${state.miniDone30} 次只做两分钟版" +
+                                    " — 动作没断就是赢",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                    }
+                }
+            }
 
             if (state.zombies.isNotEmpty()) {
                 item { SectionHeader("僵尸预案") }

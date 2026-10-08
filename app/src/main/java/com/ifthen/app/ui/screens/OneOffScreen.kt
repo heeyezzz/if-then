@@ -156,6 +156,11 @@ fun OneOffScreen(
                                             vm.logDone(rule.id)
                                             onRecord("已结清 · " + rule.thenText)
                                         },
+                                        onMiniDone = {
+                                            SuccessChime.play()
+                                            vm.logDone(rule.id, mini = true)
+                                            onRecord("最小版也算做了 · " + rule.miniThen)
+                                        },
                                         onMiss = {
                                             vm.logNotDone(rule.id)
                                             onRecord("已记为落空 · 情境只来一次")

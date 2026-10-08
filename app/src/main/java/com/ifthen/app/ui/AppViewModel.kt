@@ -58,6 +58,8 @@ data class AppUiState(
     val oneOffActive: List<Rule> = emptyList(),
     val oneOffResolvedToday: List<Rule> = emptyList(),
     val oneOffOverdueDays: Map<Long, Int> = emptyMap(),
+    val miniDone30: Int = 0,
+    val totalDone30: Int = 0,
     val oneOffStats: OneOffStats = OneOffStats(0, 0, 0, 0),
     val folders: List<Folder> = emptyList(),
     val currentFolderId: Long? = null,
@@ -182,6 +184,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             if (r.status == RuleStatus.DONE.name) od++ else om++
         }
         val oneOffStats = OneOffStats(od, om, oneOffAll.size, late.size)
+        val done30Logs = logs.filter { it.done == true && it.createdAt >= since30 }
         val heat = ArrayList<Int>(Constants.HEATMAP_DAYS)
         for (i in Constants.HEATMAP_DAYS - 1 downTo 0) {
             val d0 = todayStart - i * dayMs
@@ -235,6 +238,8 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             oneOffActive = onTime + late,
             oneOffResolvedToday = oneOffResolvedToday,
             oneOffOverdueDays = late.associate { it.id to ((todayStart - it.dueDate!!) / dayMs).toInt() + 1 },
+            miniDone30 = done30Logs.count { it.mini },
+            totalDone30 = done30Logs.size,
             oneOffStats = oneOffStats,
             folders = folders,
             currentFolderId = folderId,
@@ -271,8 +276,8 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     private val _celebrate = MutableStateFlow<Long?>(null)
     val celebrate: StateFlow<Long?> = _celebrate
 
-    fun logDone(ruleId: Long) = viewModelScope.launch(Dispatchers.IO) {
-        db.execLogDao().insert(ExecLog(ruleId = ruleId, done = true))
+    fun logDone(ruleId: Long, mini: Boolean = false) = viewModelScope.launch(Dispatchers.IO) {
+        db.execLogDao().insert(ExecLog(ruleId = ruleId, done = true, mini = mini))
         resolveOneOff(ruleId, true)
         val head = chainCompletedHead(ruleId) ?: return@launch
         SuccessChime.playChain()

@@ -132,6 +132,11 @@ fun HomeScreen(
                     vm.logDone(rule.id)
                     onRecord(rule.thenText + " ✓")
                 },
+                onMiniDone = {
+                    SuccessChime.play()
+                    vm.logDone(rule.id, mini = true)
+                    onRecord("最小版也算做了 · " + rule.miniThen)
+                },
                 onMiss = {
                     vm.logNotDone(rule.id)
                     onRecord("记下了：这次没做")

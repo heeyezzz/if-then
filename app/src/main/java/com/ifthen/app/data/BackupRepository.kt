@@ -8,7 +8,7 @@ import kotlinx.serialization.json.Json
 
 @Serializable
 data class BackupPayload(
-    val version: Int = 4,
+    val version: Int = 5,
     val exportedAt: Long = System.currentTimeMillis(),
     val folders: List<Folder> = emptyList(),
     val rules: List<Rule>,

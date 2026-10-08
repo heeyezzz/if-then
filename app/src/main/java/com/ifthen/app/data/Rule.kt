@@ -15,6 +15,8 @@ data class Rule(
     @PrimaryKey(autoGenerate = true) val id: Long = 0,
     val ifText: String,
     val thenText: String,
+    // 两分钟退化版：状态差时只做这一句也算「做了」
+    val miniThen: String = "",
     val tags: String = "",
     // v1 预留：将来自动触发的配置（JSON），暂不实现
     val triggerConfig: String? = null,

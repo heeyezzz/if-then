@@ -80,6 +80,7 @@ fun RuleEditScreen(
 ) {
     var ifText by rememberSaveable { mutableStateOf("") }
     var thenText by rememberSaveable { mutableStateOf("") }
+    var miniThen by rememberSaveable { mutableStateOf("") }
     var tags by rememberSaveable { mutableStateOf("") }
     var loaded by rememberSaveable { mutableStateOf(false) }
     var showDelete by rememberSaveable { mutableStateOf(false) }
@@ -106,6 +107,7 @@ fun RuleEditScreen(
                 current = it
                 ifText = it.ifText
                 thenText = it.thenText
+                miniThen = it.miniThen
                 tags = it.tags
                 folderId = it.folderId
                 nextId = it.nextRuleId
@@ -169,6 +171,16 @@ fun RuleEditScreen(
                 label = { Text("那就…（立刻可做的一件小事）") },
                 modifier = Modifier.fillMaxWidth(),
                 minLines = 2
+            )
+            OutlinedTextField(
+                value = miniThen,
+                onValueChange = { miniThen = it },
+                label = { Text("两分钟版（可选）") },
+                supportingText = {
+                    Text("状态差时只做这一句也算「做了」：先保住动作本身，再谈剂量")
+                },
+                modifier = Modifier.fillMaxWidth(),
+                singleLine = true
             )
             if (!oneOff) {
                 Card(
@@ -272,6 +284,7 @@ fun RuleEditScreen(
                         (base ?: Rule(ifText = "", thenText = "")).copy(
                             ifText = ifText.trim(),
                             thenText = thenText.trim(),
+                            miniThen = miniThen.trim(),
                             tags = tags.trim(),
                             folderId = folderId,
                             nextRuleId = if (oneOff) null else nextId,
