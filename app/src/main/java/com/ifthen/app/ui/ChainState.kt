@@ -54,12 +54,14 @@ object ChainState {
         }
 
         val today = logs.filter { it.createdAt >= todayStart }
-        val doneToday = HashSet<Long>()
-        val resolvedToday = HashSet<Long>()
+        // 以今天最新一条记录为准：后一次打卡覆盖前一次的口径
+        val latestToday = HashMap<Long, ExecLog>()
         today.forEach { l ->
-            if (l.done == true) doneToday.add(l.ruleId)
-            if (l.done != null) resolvedToday.add(l.ruleId)
+            val prev = latestToday[l.ruleId]
+            if (prev == null || l.createdAt > prev.createdAt) latestToday[l.ruleId] = l
         }
+        val doneToday = latestToday.filterValues { it.done == true }.keys
+        val resolvedToday = latestToday.filterValues { it.done != null }.keys
 
         val todayByHead = HashMap<Long, ChainToday>()
         chains.forEach { path ->
@@ -78,7 +80,8 @@ object ChainState {
             if (head.id !in doneToday) return@forEach
             val idx = path.indexOfFirst { it.id !in resolvedToday }
             if (idx < 0) return@forEach
-            val lastDone = today.filter { it.done == true && path.any { r -> r.id == it.ruleId } }
+            val lastDone = latestToday.values
+                .filter { it.done == true && path.any { r -> r.id == it.ruleId } }
                 .maxOfOrNull { it.createdAt } ?: 0L
             if (lastDone > bestAt) {
                 bestAt = lastDone

@@ -7,6 +7,7 @@ import kotlinx.serialization.Serializable
 /**
  * done 三态：true=触发且做了，false=触发但没做，null=待确认（晚上补记）
  * mini=true 表示这次只做了两分钟退化版，仍算「做了」
+ * backfill=true 表示这条是事后补记的（createdAt 是补记时刻，不是情境真正发生的时间）
  */
 @Serializable
 @Entity(tableName = "exec_logs")
@@ -15,5 +16,6 @@ data class ExecLog(
     val ruleId: Long,
     val done: Boolean? = null,
     val mini: Boolean = false,
+    val backfill: Boolean = false,
     val createdAt: Long = System.currentTimeMillis()
 )

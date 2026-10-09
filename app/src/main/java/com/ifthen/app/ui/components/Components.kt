@@ -1,6 +1,7 @@
 package com.ifthen.app.ui.components
 
 import androidx.compose.animation.AnimatedContent
+import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.Spring
 import androidx.compose.animation.core.animateFloatAsState
@@ -67,12 +68,14 @@ import androidx.compose.ui.draw.scale
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.StrokeCap
+import androidx.compose.ui.graphics.lerp
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
@@ -80,8 +83,13 @@ import com.ifthen.app.data.Folder
 import com.ifthen.app.data.Rule
 import com.ifthen.app.ui.NextStep
 import com.ifthen.app.ui.RuleStat
+import com.ifthen.app.ui.TodayState
+import com.ifthen.app.ui.TodayStatus
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
 import kotlin.math.abs
 import kotlin.math.roundToInt
 
@@ -205,6 +213,7 @@ fun RuleChip(
     streak: Int,
     onClick: () -> Unit,
     onLongClick: () -> Unit,
+    today: TodayStatus? = null,
     modifier: Modifier = Modifier
 ) {
     var pressed by remember { mutableStateOf(false) }
@@ -213,9 +222,15 @@ fun RuleChip(
         animationSpec = spring(dampingRatio = Spring.DampingRatioMediumBouncy),
         label = "chipScale"
     )
+    val chipAlpha by animateFloatAsState(
+        targetValue = if (today?.state == TodayState.DONE) 0.55f else 1f,
+        animationSpec = tween(180),
+        label = "chipDoneAlpha"
+    )
     Row(
         modifier = modifier
             .scale(scale)
+            .alpha(chipAlpha)
             .clip(RoundedCornerShape(50))
             .background(MaterialTheme.colorScheme.primaryContainer)
             .combinedClickable(
@@ -247,7 +262,60 @@ fun RuleChip(
                 color = MaterialTheme.colorScheme.onPrimaryContainer
             )
         }
+        val glyph = when (today?.state) {
+            TodayState.DONE -> "✓" to MaterialTheme.colorScheme.primary
+            TodayState.MISSED -> "✗" to ActionMiss
+            TodayState.PENDING -> "…" to MaterialTheme.colorScheme.onSurfaceVariant
+            else -> null
+        }
+        if (glyph != null) {
+            Spacer(Modifier.width(6.dp))
+            Text(
+                glyph.first,
+                style = MaterialTheme.typography.labelSmall,
+                fontWeight = FontWeight.SemiBold,
+                color = glyph.second
+            )
+        }
     }
+}
+
+private val stampTimeFmt = SimpleDateFormat("HH:mm", Locale.CHINA)
+
+/** 卡片右下角的今日状态戳记：做/没做/待确认。补记的条目不写具体时刻 */
+@Composable
+fun TodayStamp(status: TodayStatus?, modifier: Modifier = Modifier) {
+    if (status == null || status.state == TodayState.NONE) return
+    val text: String
+    val color: Color
+    when (status.state) {
+        TodayState.DONE -> {
+            text = if (status.backfill) "今天 ✓ · 补记"
+            else "今天 " + stampTimeFmt.format(Date(status.at)) + " ✓" +
+                if (status.mini) " 最小版" else ""
+            color = MaterialTheme.colorScheme.primary
+        }
+        TodayState.MISSED -> {
+            text = if (status.backfill) "今天 · 没做（补记）"
+            else "今天 " + stampTimeFmt.format(Date(status.at)) + " · 没做"
+            color = ActionMiss
+        }
+        else -> {
+            text = "今天 · 待确认"
+            color = MaterialTheme.colorScheme.onSurfaceVariant
+        }
+    }
+    Text(
+        text = text,
+        style = MaterialTheme.typography.labelSmall,
+        fontWeight = FontWeight.Medium,
+        color = color,
+        maxLines = 1,
+        modifier = modifier
+            .clip(RoundedCornerShape(6.dp))
+            .border(1.dp, color.copy(alpha = 0.35f), RoundedCornerShape(6.dp))
+            .padding(horizontal = 6.dp, vertical = 1.dp)
+    )
 }
 
 /**
@@ -274,6 +342,7 @@ fun SwipeRuleCard(
     onMiniDone: (() -> Unit)? = null,
     overdueDays: Int? = null,
     dueLabel: String? = null,
+    today: TodayStatus? = null,
     moveLabel: String = "移夹",
     moveIcon: androidx.compose.ui.graphics.vector.ImageVector = Icons.Filled.DriveFileMove,
     cardModifier: Modifier = Modifier,
@@ -295,6 +364,22 @@ fun SwipeRuleCard(
         label = "cardPop"
     )
     val revealed = revealedId == rule.id
+
+    val isDone = today?.state == TodayState.DONE
+    val contentAlpha by animateFloatAsState(
+        targetValue = if (isDone) 0.55f else 1f,
+        animationSpec = tween(180),
+        label = "doneContentAlpha"
+    )
+    val cardColor by animateColorAsState(
+        targetValue = lerp(
+            MaterialTheme.colorScheme.surfaceVariant,
+            MaterialTheme.colorScheme.background,
+            if (isDone) 0.6f else 0f
+        ),
+        animationSpec = tween(180),
+        label = "doneCardColor"
+    )
 
     val dragModifier = if (swipeEnabled) {
         Modifier.pointerInput(rule.id, revealed) {
@@ -382,9 +467,7 @@ fun SwipeRuleCard(
                 .scale(cardScale)
                 .then(dragModifier),
             shape = RoundedCornerShape(14.dp),
-            colors = CardDefaults.cardColors(
-                containerColor = MaterialTheme.colorScheme.surfaceVariant
-            )
+            colors = CardDefaults.cardColors(containerColor = cardColor)
         ) {
             Row(
                 modifier = Modifier
@@ -397,83 +480,99 @@ fun SwipeRuleCard(
                     Spacer(Modifier.width(10.dp))
                 }
                 Column(
-                    Modifier.weight(1f).alpha(1f - revealProgress),
+                    Modifier.weight(1f),
                     verticalArrangement = Arrangement.spacedBy(3.dp)
                 ) {
-                    TaggedLine(
-                        tag = "如果",
-                        tone = TagTone.Condition,
-                        text = rule.ifText,
-                        style = MaterialTheme.typography.bodyLarge,
-                        color = MaterialTheme.colorScheme.onSurface,
-                        trailing = overdueDays?.let { days ->
-                            {
+                    Column(
+                        Modifier.alpha(contentAlpha * (1f - revealProgress)),
+                        verticalArrangement = Arrangement.spacedBy(3.dp)
+                    ) {
+                        TaggedLine(
+                            tag = "如果",
+                            tone = TagTone.Condition,
+                            text = rule.ifText,
+                            style = MaterialTheme.typography.bodyLarge,
+                            color = MaterialTheme.colorScheme.onSurface,
+                            trailing = overdueDays?.let { days ->
+                                {
+                                    Text(
+                                        "逾期 $days 天",
+                                        style = MaterialTheme.typography.labelSmall,
+                                        color = MaterialTheme.colorScheme.error
+                                    )
+                                }
+                            }
+                        )
+                        TaggedLine(
+                            tag = "就",
+                            tone = TagTone.Action,
+                            text = rule.thenText,
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            textDecoration = if (isDone) TextDecoration.LineThrough
+                            else TextDecoration.None,
+                            trailing = dueLabel?.let { label ->
+                                {
+                                    Text(
+                                        label,
+                                        style = MaterialTheme.typography.labelSmall,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                                    )
+                                }
+                            } ?: { StreakChip(stat.streak) }
+                        )
+                        if (rule.miniThen.isNotBlank() && onMiniDone != null) {
+                            Row(
+                                Modifier
+                                    .clip(RoundedCornerShape(8.dp))
+                                    .clickable { onMiniDone() }
+                                    .padding(vertical = 4.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Box(
+                                    Modifier.width(TagColumnWidth),
+                                    contentAlignment = Alignment.CenterStart
+                                ) {
+                                    Text(
+                                        "2min",
+                                        style = MaterialTheme.typography.labelSmall,
+                                        fontWeight = FontWeight.SemiBold,
+                                        color = MaterialTheme.colorScheme.primary,
+                                        modifier = Modifier
+                                            .clip(RoundedCornerShape(6.dp))
+                                            .border(
+                                                1.dp,
+                                                MaterialTheme.colorScheme.primary.copy(alpha = 0.35f),
+                                                RoundedCornerShape(6.dp)
+                                            )
+                                            .padding(horizontal = 5.dp, vertical = 1.dp)
+                                    )
+                                }
                                 Text(
-                                    "逾期 $days 天",
+                                    rule.miniThen,
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    maxLines = 2,
+                                    overflow = TextOverflow.Ellipsis,
+                                    modifier = Modifier.weight(1f)
+                                )
+                                Text(
+                                    "做这个",
                                     style = MaterialTheme.typography.labelSmall,
-                                    color = MaterialTheme.colorScheme.error
+                                    color = MaterialTheme.colorScheme.primary,
+                                    modifier = Modifier.padding(start = 8.dp)
                                 )
                             }
                         }
-                    )
-                    TaggedLine(
-                        tag = "就",
-                        tone = TagTone.Action,
-                        text = rule.thenText,
-                        style = MaterialTheme.typography.bodyMedium,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        trailing = dueLabel?.let { label ->
-                            {
-                                Text(
-                                    label,
-                                    style = MaterialTheme.typography.labelSmall,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                                )
-                            }
-                        } ?: { StreakChip(stat.streak) }
-                    )
-                    if (rule.miniThen.isNotBlank() && onMiniDone != null) {
+                    }
+                    if (today != null && today.state != TodayState.NONE) {
                         Row(
                             Modifier
-                                .clip(RoundedCornerShape(8.dp))
-                                .clickable { onMiniDone() }
-                                .padding(vertical = 4.dp),
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            Box(
-                                Modifier.width(TagColumnWidth),
-                                contentAlignment = Alignment.CenterStart
-                            ) {
-                                Text(
-                                    "2min",
-                                    style = MaterialTheme.typography.labelSmall,
-                                    fontWeight = FontWeight.SemiBold,
-                                    color = MaterialTheme.colorScheme.primary,
-                                    modifier = Modifier
-                                        .clip(RoundedCornerShape(6.dp))
-                                        .border(
-                                            1.dp,
-                                            MaterialTheme.colorScheme.primary.copy(alpha = 0.35f),
-                                            RoundedCornerShape(6.dp)
-                                        )
-                                        .padding(horizontal = 5.dp, vertical = 1.dp)
-                                )
-                            }
-                            Text(
-                                rule.miniThen,
-                                style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                maxLines = 2,
-                                overflow = TextOverflow.Ellipsis,
-                                modifier = Modifier.weight(1f)
-                            )
-                            Text(
-                                "做这个",
-                                style = MaterialTheme.typography.labelSmall,
-                                color = MaterialTheme.colorScheme.primary,
-                                modifier = Modifier.padding(start = 8.dp)
-                            )
-                        }
+                                .fillMaxWidth()
+                                .alpha(1f - revealProgress)
+                                .padding(top = 2.dp),
+                            horizontalArrangement = Arrangement.End
+                        ) { TodayStamp(today) }
                     }
                 }
             }
@@ -749,6 +848,7 @@ fun TaggedLine(
     color: Color,
     maxLines: Int = 4,
     modifier: Modifier = Modifier,
+    textDecoration: TextDecoration = TextDecoration.None,
     trailing: (@Composable () -> Unit)? = null
 ) {
     Row(modifier, verticalAlignment = Alignment.Top) {
@@ -764,6 +864,7 @@ fun TaggedLine(
             color = color,
             maxLines = maxLines,
             overflow = TextOverflow.Ellipsis,
+            textDecoration = textDecoration,
             modifier = Modifier.weight(1f)
         )
         if (trailing != null) {

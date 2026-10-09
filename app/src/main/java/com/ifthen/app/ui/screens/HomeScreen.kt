@@ -126,6 +126,7 @@ fun HomeScreen(
                 stepExpanded = stepExpanded,
                 onStepClick = onStepClick,
                 swipeEnabled = !sorting,
+                today = state.todayStatusByRule[rule.id],
                 modifier = if (indented) Modifier.padding(start = 18.dp) else Modifier,
                 onDone = {
                     SuccessChime.play()
@@ -255,6 +256,7 @@ fun HomeScreen(
                             RuleChip(
                                 rule = rule,
                                 streak = state.stats[rule.id]?.streak ?: 0,
+                                today = state.todayStatusByRule[rule.id],
                                 onClick = {
                                     SuccessChime.play()
                                     vm.logDone(rule.id)

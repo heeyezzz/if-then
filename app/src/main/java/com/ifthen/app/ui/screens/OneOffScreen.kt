@@ -33,6 +33,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.lerp
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.unit.dp
 import com.ifthen.app.data.Rule
@@ -41,6 +42,7 @@ import com.ifthen.app.ui.AppUiState
 import com.ifthen.app.ui.AppViewModel
 import com.ifthen.app.ui.RuleStat
 import com.ifthen.app.ui.SuccessChime
+import com.ifthen.app.ui.TodayStatus
 import com.ifthen.app.ui.components.SectionHeader
 import com.ifthen.app.ui.components.SortPad
 import com.ifthen.app.ui.components.SwipeRuleCard
@@ -52,6 +54,7 @@ import java.util.Date
 import java.util.Locale
 
 private val dueFmt = SimpleDateFormat("M月d日", Locale.CHINA)
+private val resolvedTimeFmt = SimpleDateFormat("HH:mm", Locale.CHINA)
 
 @Composable
 fun OneOffScreen(
@@ -199,6 +202,7 @@ fun OneOffScreen(
                     Box(Modifier.animateItem()) {
                         ResolvedOneOffRow(
                             rule = rule,
+                            today = state.todayStatusByRule[rule.id],
                             onClick = { onEdit(rule.id) }
                         )
                     }
@@ -226,15 +230,23 @@ fun OneOffScreen(
     }
 }
 
-/** 当天已结清的一次性预案：灰显结果，点进去可重新挂起 */
+/** 当天已结清的一次性预案：灰显结果（力度与长期完成态一致），点进去可重新挂起 */
 @Composable
-private fun ResolvedOneOffRow(rule: Rule, onClick: () -> Unit) {
+private fun ResolvedOneOffRow(rule: Rule, today: TodayStatus?, onClick: () -> Unit) {
     val done = rule.status == RuleStatus.DONE.name
     val fg = MaterialTheme.colorScheme.onSurfaceVariant
+    val mark = buildString {
+        append(if (done) "✓ 做了" else "✗ 没做")
+        today?.let { append(" · ").append(if (it.backfill) "补记" else resolvedTimeFmt.format(Date(it.at))) }
+    }
     Card(
         onClick = onClick,
         colors = CardDefaults.cardColors(
-            containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.45f)
+            containerColor = lerp(
+                MaterialTheme.colorScheme.surfaceVariant,
+                MaterialTheme.colorScheme.background,
+                0.6f
+            )
         ),
         modifier = Modifier.fillMaxWidth()
     ) {
@@ -250,7 +262,7 @@ private fun ResolvedOneOffRow(rule: Rule, onClick: () -> Unit) {
                 color = fg,
                 trailing = {
                     Text(
-                        if (done) "✓ 做了" else "✗ 没做",
+                        mark,
                         style = MaterialTheme.typography.labelMedium,
                         color = if (done) MaterialTheme.colorScheme.primary
                         else MaterialTheme.colorScheme.tertiary

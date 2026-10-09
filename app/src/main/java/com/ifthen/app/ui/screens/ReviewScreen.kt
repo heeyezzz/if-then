@@ -1,6 +1,7 @@
 package com.ifthen.app.ui.screens
 
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -10,9 +11,11 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyListScope
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Delete
@@ -34,6 +37,9 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.dp
 import androidx.compose.material3.AlertDialog
 import com.ifthen.app.data.ExecLog
@@ -43,6 +49,9 @@ import com.ifthen.app.ui.AppViewModel
 import com.ifthen.app.ui.ChainHealth
 import com.ifthen.app.ui.ChainState
 import com.ifthen.app.ui.RuleStat
+import com.ifthen.app.ui.TodayState
+import com.ifthen.app.ui.TodayStatus
+import com.ifthen.app.ui.components.ActionMiss
 import com.ifthen.app.ui.components.Heatmap
 import com.ifthen.app.ui.components.SectionHeader
 import com.ifthen.app.ui.components.StreakChip
@@ -126,7 +135,8 @@ fun ReviewScreen(
                 item { SectionHeader("最常触发") }
                 items(state.highTriggers, key = { "h${it.id}" }) { rule ->
                     val s = state.stats[rule.id] ?: RuleStat()
-                    StatRow(rule.ifText, "30天触发 ${s.triggers30} 次 · 执行率 ${rateText(s)}", s.streak)
+                    StatRow(rule.ifText, "30天触发 ${s.triggers30} 次 · 执行率 ${rateText(s)}", s.streak,
+                        state.todayStatusByRule[rule.id])
                 }
             }
 
@@ -272,7 +282,8 @@ private fun LazyListScope.ruleItemsWithChains(
                 StatRow(
                     "  " + (if (chained) "${circled(step)} " else "") + rule.ifText,
                     "30天触发 ${st.triggers30} · 执行率 ${rateText(st)}",
-                    st.streak
+                    st.streak,
+                    state.todayStatusByRule[rule.id]
                 )
             }
         }
@@ -396,7 +407,7 @@ private fun OneOffStat(label: String, value: Int, color: androidx.compose.ui.gra
 }
 
 @Composable
-private fun StatRow(title: String, detail: String, streak: Int) {
+private fun StatRow(title: String, detail: String, streak: Int, today: TodayStatus? = null) {
     Card(modifier = Modifier.fillMaxWidth()) {
         Row(Modifier.padding(14.dp), verticalAlignment = Alignment.CenterVertically) {
             Column(Modifier.weight(1f)) {
@@ -404,9 +415,29 @@ private fun StatRow(title: String, detail: String, streak: Int) {
                 Text(detail, style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
+            if (today != null && today.state != TodayState.NONE) TodayDot(today)
             StreakChip(streak)
         }
     }
+}
+
+/** 复盘列表里的「今天」状态点：实心=已定论，空心=待确认 */
+@Composable
+private fun TodayDot(today: TodayStatus) {
+    val (color, filled, label) = when (today.state) {
+        TodayState.DONE -> Triple(MaterialTheme.colorScheme.primary, true, "今天做了")
+        TodayState.MISSED -> Triple(ActionMiss, true, "今天没做")
+        else -> Triple(MaterialTheme.colorScheme.onSurfaceVariant, false, "今天待确认")
+    }
+    Box(
+        Modifier
+            .padding(end = 8.dp)
+            .size(9.dp)
+            .clip(CircleShape)
+            .background(if (filled) color else Color.Transparent)
+            .then(if (filled) Modifier else Modifier.border(1.5.dp, color, CircleShape))
+            .semantics { contentDescription = label }
+    )
 }
 
 @Composable

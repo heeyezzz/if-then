@@ -36,6 +36,16 @@ data class RuleStat(
     val lastTriggerAt: Long? = null
 )
 
+/** 一条预案「今天」的状态：以今天最新一条记录为准 */
+enum class TodayState { NONE, DONE, MISSED, PENDING }
+
+data class TodayStatus(
+    val state: TodayState,
+    val at: Long = 0L,
+    val mini: Boolean = false,
+    val backfill: Boolean = false
+)
+
 data class FolderSummary(
     val folder: Folder,
     val depth: Int,
@@ -68,6 +78,7 @@ data class AppUiState(
     val visibleRules: List<Rule> = emptyList(),
     val frequentRuleIds: List<Long> = emptyList(),
     val stats: Map<Long, RuleStat> = emptyMap(),
+    val todayStatusByRule: Map<Long, TodayStatus> = emptyMap(),
     val folderSummaries: List<FolderSummary> = emptyList(),
     val todayLogs: List<ExecLog> = emptyList(),
     val heatmap: List<Int> = List(Constants.HEATMAP_DAYS) { 0 },
@@ -164,6 +175,24 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         val todayStart = dayStart(ts)
         val todayLogs = logs.filter { it.createdAt >= todayStart }
 
+        // 今天最新一条记录决定这条预案今天的显示状态
+        val todayStatusByRule = HashMap<Long, TodayStatus>()
+        todayLogs.forEach { l ->
+            val prev = todayStatusByRule[l.ruleId]
+            if (prev == null || l.createdAt > prev.at) {
+                todayStatusByRule[l.ruleId] = TodayStatus(
+                    state = when (l.done) {
+                        true -> TodayState.DONE
+                        false -> TodayState.MISSED
+                        null -> TodayState.PENDING
+                    },
+                    at = l.createdAt,
+                    mini = l.mini,
+                    backfill = l.backfill
+                )
+            }
+        }
+
         // 一次性：未逾期按手动顺序，逾期统一沉底（刚逾期的排在沉底区上方，更可能还来得及）
         val oneOffAll = activeAll.filter { it.isOneOff }
         val onTime = oneOffAll.filter { it.dueDate == null || it.dueDate!! >= todayStart }.sortedBy { it.sortOrder }
@@ -248,6 +277,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             visibleRules = visibleRules,
             frequentRuleIds = frequent,
             stats = stats,
+            todayStatusByRule = todayStatusByRule,
             folderSummaries = summaries,
             todayLogs = todayLogs,
             heatmap = heat,
@@ -342,7 +372,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
 
     /** 晚上补记：先记一条「待定」，之后再标做了/没做 */
     fun logPending(ruleId: Long) = viewModelScope.launch(Dispatchers.IO) {
-        db.execLogDao().insert(ExecLog(ruleId = ruleId, done = null))
+        db.execLogDao().insert(ExecLog(ruleId = ruleId, done = null, backfill = true))
     }
 
     fun resolveLog(log: ExecLog, done: Boolean?) = viewModelScope.launch(Dispatchers.IO) {
