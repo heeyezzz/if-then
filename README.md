@@ -44,9 +44,13 @@
 
 ## 安装
 
-到 [Releases](../../releases) 下载 `app-debug.apk`，手机上安装（允许未知来源）。
+到 [Releases](../../releases) 下载 `app-release.apk`，手机上安装（允许未知来源）。
+
+**不要装 `app-debug.apk`**：debuggable 的包会被 ART 强制成解释执行，AOT 编译对它不生效，实测交互卡顿差 15 倍（详见「性能」）。v0.6 及之前发的就是 debug 包。
 
 要求：Android 8.0+（minSdk 26）。数据全部存本地，AI 功能需要你自备一个 OpenAI 兼容接口（默认配置指向 DeepSeek）。
+
+从 debug 包换到 release 包**必须卸载重装**（签名不同，覆盖装不上），卸载会清数据：先在旧版里「设置 → 导出 JSON 备份」，装新版后再「从 JSON 恢复」。
 
 ## 数据与隐私
 
@@ -60,48 +64,53 @@
 ```bash
 # 需要 JDK 17 + Android SDK 35
 echo "sdk.dir=/path/to/android-sdk" > local.properties
-./gradlew assembleDebug
-# 产物：app/build/outputs/apk/debug/app-debug.apk
+./gradlew assembleDebug     # 日常调试用（慢，见「性能」）
+./gradlew assembleRelease   # 发布用：R8 压缩 + 资源收缩，产物 app/build/outputs/apk/release/app-release.apk
 ```
+
+发版需要 `keystore.properties`（已 gitignore，放在仓库根目录），内容指向 `~/.android/ifthen-release.jks`。**这个密钥文件丢了就没法给已安装的设备平滑升级**，要单独备份到仓库之外。没有它时 release 会退回 debug 签名，只能本机自测。
 
 技术栈：Kotlin · Jetpack Compose · Material 3 · Room · DataStore · OkHttp · kotlinx.serialization
 
 ## 性能
 
-> **结论先行：下面这批改动经真机干净协议复测，没有测出可复现的收益。** 保留是因为原理上成立（少组合、少图层、主线程少算），不是因为数字变好。详见「复测记录」。
+> **结论先行：卡顿的根因是「一直在发 debug 包」，不是 UI 代码。** debuggable 的应用 ART 会强制走解释器，AOT 编译和 Baseline Profile 对它都不生效。同一台手机同一个包，release 版把冷启动展开从 48ms 打到 3.2ms。
 
-- `HorizontalPager` 用 `beyondViewportPageCount = navItems.size - 1` 预组合全部 4 页
-- 左滑的四个动作钮改成**首次左拖才组合**（静止时被卡片整个盖住）
-- 去掉 `clip + background/border` 里白建的图形层；卡片无长按回调时用 `clickable` 而非 `combinedClickable`
-- `AppViewModel.ui` 的 `buildState` 加 `flowOn(Dispatchers.Default)`，不再在主线程重算全量分组/连击/热力图/链条
-- 复盘页的链条分组从 `LazyListScope` 提到 composable 作用域并 `remember` 缓存
+### 真机对照（Redmi Note 11T Pro，1080×2460 @145Hz，帧预算 6.9ms）
 
-### 复测记录（REDMI K90 Pro Max，1200×2608 @120Hz，帧预算 8.3ms）
+协议：交替安装两个包 → 冷启动 → 等 9s → `gfxinfo reset` → 单次动作 → 读 `framestats` 的 UI 线程时间（`SyncQueued − HandleInputStart`）。各 6 次。
 
-协议：每次重装 → 冷启动 → 等 8s → `gfxinfo reset` → 单次动作 → 读 `framestats` 的 UI 线程时间（`SyncQueued − HandleInputStart`）。v0.5 与 v0.6 **交替**各 6 次。
-
-| 冷启动首次动作 | v0.5 | v0.6 |
+| 冷启动首次动作 | debug 包 | release 包 |
 |---|---|---|
-| 展开📁早起（5 项） | 79.6 / 84.6 / 75.9 / 76.4 / 79.1 / 79.6 → **79.2ms** | 75.7 / 77.1 / 77.5 / 76.4 / 76.5 / 75.6 → **76.5ms** |
-| 点 tab → 复盘 | 34.1 / 29.7 / 29.6 / 39.0 / 31.6 / 28.6 → **32.1ms** | 33.0 / 37.0 / 43.1 / 28.7 / 31.6 / 37.8 → **35.2ms** |
+| 点文件夹展开 | 48.4ms（49/48/48/49/48/48） | **3.2ms** |
+| 点底部 tab 切页 | 20.9ms | **3.7ms** |
 
-稳态（3 轮展开收起累积 1100+ 帧）两版也一样：`p90=6ms p95=7ms jank=0.00%`，都有一条 `p99≈44–53ms` 的长尾。
+R8 压缩后的 release 包稳态：展开 5.9ms、点切页 2.8–3.3ms、列表滚动中位 0.5ms / p95 1.6ms，**480 帧里 0 帧超预算**。
 
-**教训：之前记录的"198→80ms""67→29ms"是测量污染**——基线是在刚装完、启动工作未完成时测的，对照组环境已干净。任何单次最差帧的对比都不可信，必须交替 A/B + 多次。
+### 怎么定位到的
 
-### 当前定位到的真实成本
+`simpleperf record --app`（debuggable 包才能无 root 采样）抓冷启动首次展开：UI 线程上约 30% 的采样落在 `art::interpreter::ExecuteSwitchImplCpp`、`DoCall`、`NterpGetMethod`、`artQuickToInterpreterBridge`、`ResolveFieldWithAccessChecks`、`FindClassMethod` —— 全是解释器和类/方法解析，不是布局也不是绘制。
 
-`atrace` 命名切片：最差帧是 `AndroidOwner:measureAndLayout` **102.6ms，自身 102.6ms、无子调用** —— 纯 measure/layout，不是重组、不是绘制录制、不是 GC。5 张真实卡片 ≈ 20ms/张。
+配套证据：**展开成本与卡片数量无关**。2 张 46ms、5 张 43ms、12 张 45ms —— 一次性开销（第一张卡触发类加载，后面复用热路径），不是每张卡片的测量成本。
 
-双峰（~77ms 与 ~122ms 两档）的候选：trace 里出现 `JIT compiling android.graphics.RuntimeShader.setFloatUniform`、`RippleDrawable`、`RippleAnimationSession`、`java.util.Formatter` —— **首次点击要编译水波纹的 GPU shader**，一次性成本，落进第一次交互。
+### 之前记错的三条（已作废，别照着推）
+
+1. ~~「5 张真实卡片 ≈ 20ms/张」~~ —— 上面那条数量无关实验直接推翻，成本是固定的。
+2. ~~「强制全量 AOT 后尖峰不消失，所以不是 JIT 成本」~~ —— 测的是 debug 包，`cmd package compile` 对 debuggable 包不生效，这个实验等于没做。
+3. ~~「v0.6 那批预组合/少图层的改动是原理上成立的优化」~~ —— 在 release 包上它们都没有可测收益；真正起作用的是换包。改动本身保留（少组合、少图层、主线程少算），但**不要把它们当成流畅度的来源**。
 
 ### 已实测排除（别再试）
 
-`animateItemPlacement` 替换 · 帧率状态移进 `graphicsLayer`（拖拽本来就不卡）· 关卡片阴影 · 去掉插入动画 · 去掉 `StreakChip` 的 `AnimatedContent` · 解绑无障碍服务（GKD / 自动点击器 / 朗读都不是主因）· alpha=1 时省图形层。**强制全量 AOT 后尖峰不消失**，所以不是 JIT 成本，Baseline Profile 治不了。
+`animateItemPlacement` 替换 · 去掉展开子项的 `animateItem()`（交替 A/B 反而更慢：21.6 vs 19.3ms）· 卡片 `weight(1f)` 换 `fillMaxWidth()` 少一次测量（噪声内）· 帧率状态移进 `graphicsLayer` · 关卡片阴影 · 去掉插入动画 · 去掉 `StreakChip` 的 `AnimatedContent` · alpha=1 时省图形层。
 
-### 模拟器会骗人
+无障碍服务另说：K90 上手滑切页 12–18% 帧超预算，解绑后降到 2%——那是 Compose 每帧的语义遍历。release 包手滑 p95 只有 3.0ms，余量足够，暂未处理。
 
-模拟器上 12 张 ASCII 空壳卡展开只要 10ms，真机上 5 张真实卡片（链条序号 + 2min 行 + 连击 + 中文）要 76–128ms。**差 20 倍的是内容复杂度**，性能结论必须在真机上取。
+### 测量环境要求
+
+- **性能结论必须在非 debuggable 的包上取**，debug 包量到的全是解释器成本。
+- 模拟器（1200×2608@60Hz）上展开只要 10–22ms，真机 debug 包要 45–128ms，**差 20 倍**；但它的"是否超帧预算"仍能复现 debug 的问题，可用作廉价归因工具。
+- 单次最差帧的对比不可信，必须**交替 A/B + 多次**（噪声地板 ±3 个百分点）。
+- 手机测前务必 `svc power stayon true`：屏幕一睡，点击全打在黑屏上，测出来的是假数据。
 
 ## 已知未验证项
 

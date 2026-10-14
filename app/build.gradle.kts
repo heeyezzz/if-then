@@ -1,3 +1,5 @@
+import java.util.Properties
+
 plugins {
     alias(libs.plugins.android.application)
     alias(libs.plugins.kotlin.android)
@@ -10,17 +12,35 @@ android {
     namespace = "com.ifthen.app"
     compileSdk = 35
 
+    // 发布凭据在 keystore.properties（已 gitignore），密钥文件在 ~/.android/ifthen-release.jks
+    val ksProps = Properties()
+    val ksFile = rootProject.file("keystore.properties")
+    if (ksFile.exists()) ksFile.inputStream().use { ksProps.load(it) }
+    signingConfigs {
+        if (ksProps.isNotEmpty()) {
+            create("release") {
+                storeFile = file(ksProps.getProperty("storeFile"))
+                storePassword = ksProps.getProperty("storePassword")
+                keyAlias = ksProps.getProperty("keyAlias")
+                keyPassword = ksProps.getProperty("keyPassword")
+            }
+        }
+    }
+
     defaultConfig {
         applicationId = "com.ifthen.app"
         minSdk = 26
         targetSdk = 35
-        versionCode = 6
-        versionName = "0.6.0"
+        versionCode = 7
+        versionName = "0.7.0"
     }
 
     buildTypes {
         release {
-            isMinifyEnabled = false
+            isMinifyEnabled = true
+            isShrinkResources = true
+            proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
+            signingConfig = signingConfigs.findByName("release") ?: signingConfigs.getByName("debug")
         }
     }
     compileOptions {
@@ -33,6 +53,11 @@ android {
     buildFeatures {
         compose = true
     }
+}
+
+composeCompiler {
+    reportsDestination = layout.buildDirectory.dir("compose_reports").get()
+    metricsDestination = layout.buildDirectory.dir("compose_metrics").get()
 }
 
 ksp {

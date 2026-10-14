@@ -9,3 +9,6 @@ captures/
 .cxx/
 *.apk
 app/schemas/
+
+# 发布签名凭据，绝不入库
+keystore.properties
