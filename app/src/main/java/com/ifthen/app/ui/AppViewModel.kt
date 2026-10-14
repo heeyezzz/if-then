@@ -25,6 +25,7 @@ import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.flowOn
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 import java.util.Calendar
@@ -108,6 +109,8 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     ) { rules, logs, folders, extra ->
         buildState(rules, logs, folders, extra.first, extra.second)
     }
+        // buildState 要重算全量分组/连击/热力图/链条，放在主线程会在每次数据变化时卡住 UI
+        .flowOn(Dispatchers.Default)
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), AppUiState())
 
     init {

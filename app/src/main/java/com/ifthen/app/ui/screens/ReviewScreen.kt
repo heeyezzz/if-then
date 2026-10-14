@@ -43,11 +43,11 @@ import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.dp
 import androidx.compose.material3.AlertDialog
 import com.ifthen.app.data.ExecLog
-import com.ifthen.app.data.Rule
 import com.ifthen.app.ui.AppUiState
 import com.ifthen.app.ui.AppViewModel
 import com.ifthen.app.ui.ChainHealth
 import com.ifthen.app.ui.ChainState
+import com.ifthen.app.ui.RuleGroup
 import com.ifthen.app.ui.RuleStat
 import com.ifthen.app.ui.TodayState
 import com.ifthen.app.ui.TodayStatus
@@ -69,6 +69,19 @@ fun ReviewScreen(
     modifier: Modifier = Modifier
 ) {
     var showPickRule by remember { mutableStateOf(false) }
+    // 分组在 composable 作用域里算一次并缓存：留在 LazyListScope 里每次重组都会重跑
+    // sanitizedNext + O(n^2) 前驱查找，尖峰全落在 Compose 的动画回调阶段
+    val plan = remember(state.folderSummaries, state.activeRules) {
+        state.folderSummaries.map { fs ->
+            fs to ChainState.groupsOf(
+                state.activeRules.filter { it.folderId == fs.folder.id },
+                state.activeRules
+            )
+        } to ChainState.groupsOf(
+            state.activeRules.filter { it.folderId == null },
+            state.activeRules
+        )
+    }
     Surface(modifier = modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
         LazyColumn(
             modifier = Modifier.fillMaxSize().padding(horizontal = 16.dp),
@@ -180,7 +193,7 @@ fun ReviewScreen(
             }
 
             item { SectionHeader("全部战绩") }
-            state.folderSummaries.forEach { s ->
+            plan.first.forEach { (s, groups) ->
                 item(key = "fs${s.folder.id}") {
                     Row(
                         Modifier.padding(start = (s.depth * 16).dp),
@@ -199,10 +212,7 @@ fun ReviewScreen(
                         )
                     }
                 }
-                ruleItemsWithChains(
-                    inFolder = state.activeRules.filter { it.folderId == s.folder.id },
-                    state = state
-                )
+                ruleItemsWithChains(groups = groups, state = state)
             }
             run {
                 val rootRules = state.activeRules.filter { it.folderId == null }
@@ -214,7 +224,7 @@ fun ReviewScreen(
                             modifier = Modifier.padding(top = 8.dp)
                         )
                     }
-                    ruleItemsWithChains(inFolder = rootRules, state = state)
+                    ruleItemsWithChains(groups = plan.second, state = state)
                 }
             }
 
@@ -257,10 +267,10 @@ fun ReviewScreen(
 
 /** 全部战绩里的预案条目：链条成员聚在一起，头部带今日进度 */
 private fun LazyListScope.ruleItemsWithChains(
-    inFolder: List<Rule>,
+    groups: List<RuleGroup>,
     state: AppUiState
 ) {
-    ChainState.groupsOf(inFolder, state.activeRules).forEach { g ->
+    groups.forEach { g ->
         val head = g.rules.first()
         val today = state.chain.todayByHead[head.id]
         val chained = g.rules.size > 1

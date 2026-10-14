@@ -312,7 +312,6 @@ fun TodayStamp(status: TodayStatus?, modifier: Modifier = Modifier) {
         color = color,
         maxLines = 1,
         modifier = modifier
-            .clip(RoundedCornerShape(6.dp))
             .border(1.dp, color.copy(alpha = 0.35f), RoundedCornerShape(6.dp))
             .padding(horizontal = 6.dp, vertical = 1.dp)
     )
@@ -355,6 +354,8 @@ fun SwipeRuleCard(
     var pendingJob by remember { mutableStateOf<kotlinx.coroutines.Job?>(null) }
     var cardWidthPx by remember { mutableStateOf(0f) }
     var succeeded by remember { mutableStateOf(false) }
+    // 四个动作钮静止时被卡片整个盖住，从没被看到却要跟着组合一次；首次左拖才挂上来
+    var actionsMounted by remember { mutableStateOf(false) }
     val revealProgress = if (offsetX.value < 0f) {
         (-offsetX.value / actionsWidthPx).coerceIn(0f, 1f)
     } else 0f
@@ -384,6 +385,7 @@ fun SwipeRuleCard(
     val dragModifier = if (swipeEnabled) {
         Modifier.pointerInput(rule.id, revealed) {
             detectHorizontalDragGestures(
+                onDragStart = { if (!actionsMounted) actionsMounted = true },
                 onDragEnd = {
                     pendingJob?.cancel()
                     val target = when {
@@ -430,31 +432,33 @@ fun SwipeRuleCard(
             .fillMaxWidth()
     ) {
         // 左滑露出的动作钮（在卡片下层）
-        val buttonsVisible by animateFloatAsState(
-            targetValue = if (offsetX.value < -4f) 1f else 0f,
-            animationSpec = tween(120),
-            label = "buttonsAlpha"
-        )
-        Row(
-            modifier = Modifier
-                .align(Alignment.CenterEnd)
-                .alpha(buttonsVisible)
-                .height(with(density) { 76.dp })
-                .padding(end = 2.dp),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(ActionGap.dp)
-        ) {
-            RoundAction("没做", ActionMiss, Icons.Filled.Close) {
-                onMiss(); scope.launch { offsetX.animateTo(0f, spring()) }; onReveal(null)
-            }
-            RoundAction(moveLabel, ActionMove, moveIcon) {
-                scope.launch { offsetX.animateTo(0f, spring()) }; onReveal(null); onMove()
-            }
-            RoundAction("归档", ActionArchive, Icons.Filled.Archive) {
-                onArchive(); scope.launch { offsetX.animateTo(0f, spring()) }; onReveal(null)
-            }
-            RoundAction("删除", ActionDelete, Icons.Filled.DeleteOutline) {
-                onDelete(); scope.launch { offsetX.animateTo(0f, spring()) }; onReveal(null)
+        if (actionsMounted) {
+            val buttonsVisible by animateFloatAsState(
+                targetValue = if (offsetX.value < -4f) 1f else 0f,
+                animationSpec = tween(120),
+                label = "buttonsAlpha"
+            )
+            Row(
+                modifier = Modifier
+                    .align(Alignment.CenterEnd)
+                    .alpha(buttonsVisible)
+                    .height(with(density) { 76.dp })
+                    .padding(end = 2.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(ActionGap.dp)
+            ) {
+                RoundAction("没做", ActionMiss, Icons.Filled.Close) {
+                    onMiss(); scope.launch { offsetX.animateTo(0f, spring()) }; onReveal(null)
+                }
+                RoundAction(moveLabel, ActionMove, moveIcon) {
+                    scope.launch { offsetX.animateTo(0f, spring()) }; onReveal(null); onMove()
+                }
+                RoundAction("归档", ActionArchive, Icons.Filled.Archive) {
+                    onArchive(); scope.launch { offsetX.animateTo(0f, spring()) }; onReveal(null)
+                }
+                RoundAction("删除", ActionDelete, Icons.Filled.DeleteOutline) {
+                    onDelete(); scope.launch { offsetX.animateTo(0f, spring()) }; onReveal(null)
+                }
             }
         }
 
@@ -464,14 +468,14 @@ fun SwipeRuleCard(
                 .then(cardModifier)
                 .onSizeChanged { cardWidthPx = it.width.toFloat() }
                 .offset { IntOffset(offsetX.value.roundToInt(), 0) }
-                .scale(cardScale)
+                .then(if (cardScale == 1f) Modifier else Modifier.scale(cardScale))
                 .then(dragModifier),
             shape = RoundedCornerShape(14.dp),
             colors = CardDefaults.cardColors(containerColor = cardColor)
         ) {
             Row(
                 modifier = Modifier
-                    .combinedClickable(onClick = onOpen, onLongClick = null)
+                    .clickable(onClick = onOpen)
                     .padding(start = 14.dp, end = 6.dp, top = 12.dp, bottom = 12.dp),
                 verticalAlignment = Alignment.CenterVertically
             ) {
@@ -483,8 +487,10 @@ fun SwipeRuleCard(
                     Modifier.weight(1f),
                     verticalArrangement = Arrangement.spacedBy(3.dp)
                 ) {
+                    val fade = contentAlpha * (1f - revealProgress)
                     Column(
-                        Modifier.alpha(contentAlpha * (1f - revealProgress)),
+                        // 值为 1 时不挂 alpha：graphicsLayer 是录制成本，120Hz 下瓶颈就在录制
+                        if (fade < 0.999f) Modifier.alpha(fade) else Modifier,
                         verticalArrangement = Arrangement.spacedBy(3.dp)
                     ) {
                         TaggedLine(
@@ -539,7 +545,6 @@ fun SwipeRuleCard(
                                         fontWeight = FontWeight.SemiBold,
                                         color = MaterialTheme.colorScheme.primary,
                                         modifier = Modifier
-                                            .clip(RoundedCornerShape(6.dp))
                                             .border(
                                                 1.dp,
                                                 MaterialTheme.colorScheme.primary.copy(alpha = 0.35f),
@@ -569,7 +574,7 @@ fun SwipeRuleCard(
                         Row(
                             Modifier
                                 .fillMaxWidth()
-                                .alpha(1f - revealProgress)
+                                .then(if (revealProgress == 0f) Modifier else Modifier.alpha(1f - revealProgress))
                                 .padding(top = 2.dp),
                             horizontalArrangement = Arrangement.End
                         ) { TodayStamp(today) }
@@ -793,8 +798,7 @@ fun Heatmap(counts: List<Int>, modifier: Modifier = Modifier) {
                         modifier = Modifier
                             .weight(1f)
                             .aspectRatio(1f)
-                            .clip(RoundedCornerShape(6.dp))
-                            .background(level.copy(alpha = level.alpha * alpha))
+                            .background(level.copy(alpha = level.alpha * alpha), RoundedCornerShape(6.dp))
                     )
                 }
                 repeat(10 - row.size) {
@@ -832,8 +836,7 @@ fun SemanticTag(text: String, tone: TagTone, modifier: Modifier = Modifier) {
         color = fg,
         maxLines = 1,
         modifier = modifier
-            .clip(RoundedCornerShape(6.dp))
-            .background(bg)
+            .background(bg, RoundedCornerShape(6.dp))
             .padding(horizontal = 7.dp, vertical = 2.dp)
     )
 }

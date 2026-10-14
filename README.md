@@ -66,10 +66,20 @@ echo "sdk.dir=/path/to/android-sdk" > local.properties
 
 技术栈：Kotlin · Jetpack Compose · Material 3 · Room · DataStore · OkHttp · kotlinx.serialization
 
+## 性能
+
+两处掉帧的根源与对策。实测环境：REDMI K90 Pro Max（1200×2608 @ **120Hz**，帧预算 **8.3ms**）与 60Hz 模拟器，取 `dumpsys gfxinfo framestats` 的 UI 线程时间 + `atrace` 命名切片，交替 A/B 各 5–12 次。
+
+- **点底部 tab 切页卡**：根源是**下一页在切页动画中途才首次组合**——`beyondViewportPageCount=1` 时跳页会让预组合窗口右移，把新页塞进动画帧。真机切片证实成本在 Compose 的动画回调（36ms），绘制只有 0.3ms。改成启动时预组合全部 4 页 → 首次进复盘最差帧 **67–71 → 29–30ms**（−57%）。代价：启动多 ~76ms
+- **点文件夹展开卡**：根源是**新插入的卡片在同一帧里被组合 + 测量布局**（`atrace`：`AndroidOwner:measureAndLayout` 63ms，其中 34ms 是 `Compose:recompose`）。注意 Compose 的 measure/layout 跑在 draw 窗口内部，所以 framestats 的"布局"列只有 0.1ms、看不见它。对策：左滑四个动作钮改成**首次左拖才组合**（静止时被卡片整个盖住却照样买单）、去掉 `clip + background/border` 里白建的图形层、无长按回调时不用 `combinedClickable`、`buildState` 移出主线程、复盘页链条分组 `remember` 缓存 → 展开最差帧 **198–205 → 80–120ms**（−45~60%）
+- **残余**：展开仍有单帧超预算，且实测呈**双峰**（同构建、同冷启动，要么 ~75ms 要么 ~120ms），说明有未被控制的状态量（CPU 频率档 / 热降频 / GC）。继续定位需要 Android Studio / Perfetto UI 的 layout-node 调用栈
+- **已实测排除，别再试**：`animateItemPlacement` 替换 `animateItem` · 把帧率状态移进 `graphicsLayer`（拖拽本来就不卡，78 帧全不超预算）· 关卡片阴影 · 去掉插入动画 · 去掉 `StreakChip` 的 `AnimatedContent` · **解绑无障碍服务**（GKD / 自动点击器 / 朗读都不是主因）—— 全部零收益或无可靠变化。**强制全量 AOT 后尖峰不消失**，说明不是 JIT 成本，Baseline Profile 治不了它
+- **模拟器会骗人**：模拟器上 12 张 ASCII 空壳卡展开只要 10ms，真机上 5 张真实卡片（链条序号 + 2min 行 + 连击 + 中文）要 80–120ms。**差 20 倍的是内容复杂度**，性能结论必须在真机上取
+
 ## 已知未验证项
 
 - SAF 文件选择器的导出/导入未在真机上手动验证（链条指针在导入时会重新做悬空清理和环检测，但这条路径只做过代码级检查）
-- 数据库迁移 v1→v7（文件夹、sortOrder、nextRuleId、kind/dueDate、miniThen/mini 标记、backfill 补记标记）在模拟器上随真实升级安装验证过，真机旧数据未测
+- 数据库迁移 v1→v7 已在真机旧数据上验证通过：`user_version=7`、`backfill` 列存在，覆盖安装前后 14 条预案 / 41 条流水 / 2 个文件夹完全一致
 
 ## 规则阈值
 

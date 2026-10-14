@@ -87,9 +87,9 @@ private fun AppRoot() {
     val onTabs = backStackEntry?.destination?.route == "tabs"
     val pagerState = rememberPagerState(initialPage = PAGE_LONG_TERM) { navItems.size }
 
-    val toast: (String) -> Unit = { msg ->
-        scope.launch { snackbar.showSnackbar(msg) }
-    }
+    // 稳定住这两个回调：否则每次重组都是新实例，三个页面全部无法跳过
+    val toast: (String) -> Unit = remember(snackbar, scope) { { msg -> scope.launch { snackbar.showSnackbar(msg) } } }
+    val onEdit = remember(navController) { { id: Long -> navController.navigate("rule_edit/$id") } }
 
     Scaffold(
         snackbarHost = { SnackbarHost(snackbar) },
@@ -140,7 +140,9 @@ private fun AppRoot() {
             composable("tabs") {
                 HorizontalPager(
                     state = pagerState,
-                    beyondViewportPageCount = 1,
+                    // 启动时就把四个页面全部预组合：否则跳到某一页会让下一页在切页动画中途首次组合，尖峰全砸进动画帧
+                    beyondViewportPageCount = navItems.size - 1,
+                    key = { it },
                     modifier = Modifier.fillMaxSize()
                 ) { page ->
                     Box(Modifier.fillMaxSize()) {
