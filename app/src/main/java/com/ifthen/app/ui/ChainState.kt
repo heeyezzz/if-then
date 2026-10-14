@@ -17,7 +17,7 @@ data class ChainToday(val size: Int, val doneToday: Int)
 /** 顶部「下一步」提示条 */
 data class NextStep(val rule: Rule, val prevIfText: String, val headId: Long, val step: Int, val size: Int)
 
-/** 链条健康：近 14 天走通情况 + 最常断在第几步 */
+/** 链条健康：窗口内走通情况 + 最常断在第几步 */
 data class ChainHealth(
     val headId: Long,
     val title: String,
@@ -25,7 +25,9 @@ data class ChainHealth(
     val activeDays: Int,
     val fullDays: Int,
     val breakAt: List<Int>,
-    val worstStep: Int
+    val worstStep: Int,
+    /** 每一步对应的预案 id，结论卡点「断掉的那步」要跳去编辑它 */
+    val stepRuleIds: List<Long>
 )
 
 data class ChainSnapshot(
@@ -33,6 +35,8 @@ data class ChainSnapshot(
     val groups: List<RuleGroup> = emptyList(),
     val todayByHead: Map<Long, ChainToday> = emptyMap(),
     val nextStep: NextStep? = null,
+    /** 实际算了多少天，UI 用它标口径，避免「全部」档下写死天数 */
+    val healthDays: Int = Constants.CHAIN_HEALTH_DAYS,
     val health: List<ChainHealth> = emptyList()
 )
 
@@ -42,7 +46,8 @@ object ChainState {
         allActive: List<Rule>,
         inFolder: List<Rule>,
         logs: List<ExecLog>,
-        todayStart: Long
+        todayStart: Long,
+        healthDays: Int
     ): ChainSnapshot {
         val chains = Chain.chains(allActive)
         if (chains.isEmpty()) {
@@ -100,7 +105,8 @@ object ChainState {
             groups = groupsOf(inFolder, allActive),
             todayByHead = todayByHead,
             nextStep = best,
-            health = healthOf(chains, logs, todayStart)
+            healthDays = healthDays,
+            health = healthOf(chains, logs, todayStart, healthDays)
         )
     }
 
@@ -143,7 +149,8 @@ object ChainState {
     private fun healthOf(
         chains: List<List<Rule>>,
         logs: List<ExecLog>,
-        todayStart: Long
+        todayStart: Long,
+        days: Int
     ): List<ChainHealth> {
         val dayMs = 24L * 3600_000
         val out = ArrayList<ChainHealth>()
@@ -151,7 +158,7 @@ object ChainState {
             val breakAt = IntArray(path.size)
             var activeDays = 0
             var fullDays = 0
-            for (d in 0 until Constants.CHAIN_HEALTH_DAYS) {
+            for (d in 0 until days) {
                 val d0 = todayStart - d * dayMs
                 val d1 = d0 + dayMs
                 val dayLogs = logs.filter { it.createdAt >= d0 && it.createdAt < d1 }
@@ -164,7 +171,8 @@ object ChainState {
                     if (idx >= 0) breakAt[idx]++
                 }
             }
-            if (activeDays == 0) return@forEach
+            // 短窗口里活跃一两天就算不出「最常断在哪」，宁可不说话也别给假结论
+            if (activeDays < Constants.CHAIN_HEALTH_MIN_ACTIVE_DAYS) return@forEach
             val worstIdx = if (breakAt.all { it == 0 }) -1
             else breakAt.indices.maxByOrNull { breakAt[it] } ?: -1
             out.add(
@@ -175,7 +183,8 @@ object ChainState {
                     activeDays = activeDays,
                     fullDays = fullDays,
                     breakAt = breakAt.toList(),
-                    worstStep = worstIdx + 1
+                    worstStep = worstIdx + 1,
+                    stepRuleIds = path.map { it.id }
                 )
             )
         }

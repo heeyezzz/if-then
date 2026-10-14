@@ -7,6 +7,8 @@ val Pine = Color(0xFF1F6E5C)
 val PineDark = Color(0xFF8ED6BC)
 val OnPine = Color(0xFFFFFFFF)
 val PineContainer = Color(0xFFB3F1DC)
+/** 暗色下的容器绿：必须比 primary 深，否则卡片上的 primary 文字会和底色同色 */
+val PineContainerDark = Color(0xFF123F33)
 val OnPineContainer = Color(0xFF00201A)
 val PineSurface = Color(0xFFE4F5EE)
 

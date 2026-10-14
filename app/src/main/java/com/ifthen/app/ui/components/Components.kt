@@ -79,8 +79,10 @@ import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
+import com.ifthen.app.Constants
 import com.ifthen.app.data.Folder
 import com.ifthen.app.data.Rule
+import com.ifthen.app.ui.Heat
 import com.ifthen.app.ui.NextStep
 import com.ifthen.app.ui.RuleStat
 import com.ifthen.app.ui.TodayState
@@ -770,41 +772,87 @@ fun FolderEditorDialog(
     )
 }
 
+/** 热力图：一天一格（「全部」档一周一格），点一格看那天/那周的流水 */
 @Composable
-fun Heatmap(counts: List<Int>, modifier: Modifier = Modifier) {
-    val base = MaterialTheme.colorScheme.surfaceVariant
+fun Heatmap(
+    heat: Heat,
+    selected: Int?,
+    onCellClick: (Int) -> Unit,
+    modifier: Modifier = Modifier
+) {
+    // 空格子用 onSurfaceVariant 半透明：surfaceVariant 卡片上再铺 surfaceVariant 会直接看不见
+    val base = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.18f)
     val low = MaterialTheme.colorScheme.primary.copy(alpha = 0.30f)
     val mid = MaterialTheme.colorScheme.primary.copy(alpha = 0.55f)
     val high = MaterialTheme.colorScheme.primary
     var appeared by remember { mutableStateOf(false) }
     LaunchedEffect(Unit) { appeared = true }
     Column(modifier = modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-        counts.chunked(10).forEachIndexed { rowIndex, row ->
+        heat.cells.chunked(Constants.HEATMAP_CELLS_PER_ROW).forEachIndexed { rowIndex, row ->
+            val startIndex = rowIndex * Constants.HEATMAP_CELLS_PER_ROW
             Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                row.forEachIndexed { colIndex, c ->
-                    val delayMs = (rowIndex * 10 + colIndex) * 12
+                row.forEachIndexed { colIndex, cell ->
+                    val index = startIndex + colIndex
+                    val delayMs = index * 8
                     val alpha by animateFloatAsState(
                         targetValue = if (appeared) 1f else 0f,
                         animationSpec = tween(durationMillis = 260, delayMillis = delayMs),
                         label = "heatAlpha"
                     )
                     val level = when {
-                        c <= 0 -> base
-                        c <= 2 -> low
-                        c <= 5 -> mid
+                        cell.count <= 0 -> base
+                        cell.count <= 2 -> low
+                        cell.count <= 5 -> mid
                         else -> high
                     }
                     Box(
                         modifier = Modifier
                             .weight(1f)
                             .aspectRatio(1f)
+                            .clip(RoundedCornerShape(6.dp))
                             .background(level.copy(alpha = level.alpha * alpha), RoundedCornerShape(6.dp))
+                            .then(
+                                if (cell.isToday) Modifier.border(
+                                    1.5.dp, MaterialTheme.colorScheme.onSurface.copy(alpha = 0.55f),
+                                    RoundedCornerShape(6.dp)
+                                ) else Modifier
+                            )
+                            .then(
+                                if (selected == index) Modifier.border(
+                                    2.dp, MaterialTheme.colorScheme.onSurface, RoundedCornerShape(6.dp)
+                                ) else Modifier
+                            )
+                            .semantics {
+                                contentDescription = "${cell.label}，做了 ${cell.count} 次" +
+                                    if (cell.isToday) "，今天" else ""
+                            }
+                            .clickable { onCellClick(index) }
                     )
                 }
-                repeat(10 - row.size) {
+                repeat(Constants.HEATMAP_CELLS_PER_ROW - row.size) {
                     Box(modifier = Modifier.weight(1f).aspectRatio(1f))
                 }
             }
+        }
+        Row(
+            Modifier.fillMaxWidth().padding(top = 2.dp),
+            horizontalArrangement = Arrangement.SpaceBetween
+        ) {
+            Text(
+                heat.cells.firstOrNull()?.label.orEmpty(),
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+            Text(
+                if (heat.byWeek) "一格 = 一周" else "一格 = 一天",
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+            Text(
+                "框住的是今天",
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
         }
     }
 }

@@ -5,8 +5,10 @@ import android.net.Uri
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.ifthen.app.Constants
+import com.ifthen.app.ReviewWindow
 import com.ifthen.app.ai.AiCandidate
 import com.ifthen.app.ai.DeepSeekClient
+import com.ifthen.app.ai.ReviewInsight
 import com.ifthen.app.data.ApiSettings
 import com.ifthen.app.data.AppDatabase
 import com.ifthen.app.data.BackupRepository
@@ -28,14 +30,22 @@ import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.flowOn
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
+import java.text.SimpleDateFormat
 import java.util.Calendar
+import java.util.Date
+import java.util.Locale
 
 data class RuleStat(
     val streak: Int = 0,
-    val triggers30: Int = 0,
-    val done30: Int = 0,
+    /** 以下计数都按复盘页当前时间范围算，不是固定 30 天 */
+    val triggers: Int = 0,
+    val done: Int = 0,
     val lastTriggerAt: Long? = null
-)
+) {
+    /** 样本不够 [minSample] 次时不给百分比，避免「触发 5 次的 100%」冒充结论 */
+    fun rate(window: ReviewWindow): Int? =
+        if (triggers < window.minSample) null else done * 100 / triggers
+}
 
 /** 一条预案「今天」的状态：以今天最新一条记录为准 */
 enum class TodayState { NONE, DONE, MISSED, PENDING }
@@ -50,16 +60,35 @@ data class TodayStatus(
 data class FolderSummary(
     val folder: Folder,
     val depth: Int,
-    val triggers30: Int,
-    val done30: Int
+    val triggers: Int,
+    val done: Int
+) {
+    fun rate(window: ReviewWindow): Int? = if (triggers < window.minSample) null else done * 100 / triggers
+}
+
+/** 热力图一格：按天或按周聚合，带当天流水供点击就地展开 */
+data class HeatCell(
+    val label: String,
+    val count: Int,
+    val isToday: Boolean,
+    val logs: List<ExecLog>
 )
 
+data class Heat(val cells: List<HeatCell>, val byWeek: Boolean)
+
+/** 结论卡之一：窗口内执行率最低、且样本够得上一条长期预案 */
+data class WorstRule(val rule: Rule, val triggers: Int, val done: Int, val rate: Int)
+
 data class OneOffStats(
-    val done: Int,
-    val missed: Int,
-    val pending: Int,
-    val overdue: Int
+    val doneRules: List<Rule> = emptyList(),
+    val missedRules: List<Rule> = emptyList(),
+    val pendingRules: List<Rule> = emptyList(),
+    val overdueRules: List<Rule> = emptyList()
 ) {
+    val done: Int get() = doneRules.size
+    val missed: Int get() = missedRules.size
+    val pending: Int get() = pendingRules.size
+    val overdue: Int get() = overdueRules.size
     val rate: Int? get() = if (done + missed == 0) null else done * 100 / (done + missed)
 }
 
@@ -69,9 +98,9 @@ data class AppUiState(
     val oneOffActive: List<Rule> = emptyList(),
     val oneOffResolvedToday: List<Rule> = emptyList(),
     val oneOffOverdueDays: Map<Long, Int> = emptyMap(),
-    val miniDone30: Int = 0,
-    val totalDone30: Int = 0,
-    val oneOffStats: OneOffStats = OneOffStats(0, 0, 0, 0),
+    val miniDone: Int = 0,
+    val totalDone: Int = 0,
+    val oneOffStats: OneOffStats = OneOffStats(),
     val folders: List<Folder> = emptyList(),
     val currentFolderId: Long? = null,
     val crumbs: List<Folder> = emptyList(),
@@ -82,12 +111,23 @@ data class AppUiState(
     val todayStatusByRule: Map<Long, TodayStatus> = emptyMap(),
     val folderSummaries: List<FolderSummary> = emptyList(),
     val todayLogs: List<ExecLog> = emptyList(),
-    val heatmap: List<Int> = List(Constants.HEATMAP_DAYS) { 0 },
+    val reviewWindow: ReviewWindow = ReviewWindow.MONTH,
+    val heat: Heat = Heat(emptyList(), false),
     val zombies: List<Rule> = emptyList(),
-    val highTriggers: List<Rule> = emptyList(),
+    /** 结论卡：最该改的那条 + 链条最常断的那一步 */
+    val worst: WorstRule? = null,
+    val breakPoint: ChainHealth? = null,
     val ruleById: Map<Long, Rule> = emptyMap(),
     val chain: ChainSnapshot = ChainSnapshot()
 )
+
+/** 复盘页 AI 点评：只在用户点按时请求，结果按窗口 + 数据指纹缓存在内存 */
+sealed interface AiReview {
+    object Idle : AiReview
+    object Loading : AiReview
+    data class Failed(val message: String) : AiReview
+    data class Ready(val insight: ReviewInsight, val ruleIds: List<Long>, val fingerprint: Long) : AiReview
+}
 
 class AppViewModel(app: Application) : AndroidViewModel(app) {
     private val db = AppDatabase.get(app)
@@ -100,14 +140,19 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
 
     private val now = MutableStateFlow(System.currentTimeMillis())
     private val currentFolderId = MutableStateFlow<Long?>(null)
+    private val reviewWindow = MutableStateFlow(ReviewWindow.MONTH)
+
+    fun setReviewWindow(w: ReviewWindow) {
+        reviewWindow.value = w
+    }
 
     val ui: StateFlow<AppUiState> = combine(
         db.ruleDao().observeAll(),
         db.execLogDao().observeSince(0L),
         db.folderDao().observeAll(),
-        combine(now, currentFolderId) { a, b -> a to b }
+        combine(now, currentFolderId, reviewWindow) { t, f, w -> Triple(t, f, w) }
     ) { rules, logs, folders, extra ->
-        buildState(rules, logs, folders, extra.first, extra.second)
+        buildState(rules, logs, folders, extra.first, extra.second, extra.third)
     }
         // buildState 要重算全量分组/连击/热力图/链条，放在主线程会在每次数据变化时卡住 UI
         .flowOn(Dispatchers.Default)
@@ -127,7 +172,8 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         logs: List<ExecLog>,
         folders: List<Folder>,
         ts: Long,
-        folderId: Long?
+        folderId: Long?,
+        window: ReviewWindow
     ): AppUiState {
         val activeAll = rules.filter { it.status == RuleStatus.ACTIVE.name }
         // 长期清单才是"战绩/链条/文件夹"的主场；一次性另成一页
@@ -135,7 +181,9 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         val archived = rules.filter { it.status == RuleStatus.ARCHIVED.name }
         val byRule = logs.groupBy { it.ruleId }
         val dayMs = 24L * 3600_000
-        val since30 = ts - Constants.RULE_STATS_WINDOW_DAYS * dayMs
+        val todayStart = dayStart(ts)
+        // 窗口按自然日对齐，跟热力图的格子同一套切法；「全部」就是没有起点
+        val since = if (window.days == 0) 0L else todayStart - (window.days - 1) * dayMs
         val sinceFrequent = ts - Constants.FREQUENT_WINDOW_DAYS * dayMs
 
         val stats = active.associate { r ->
@@ -148,11 +196,11 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                     null -> {}
                 }
             }
-            val in30 = rl.filter { it.createdAt >= since30 }
+            val inWindow = rl.filter { it.createdAt >= since }
             r.id to RuleStat(
                 streak = streak,
-                triggers30 = in30.size,
-                done30 = in30.count { it.done == true },
+                triggers = inWindow.size,
+                done = inWindow.count { it.done == true },
                 lastTriggerAt = rl.firstOrNull()?.createdAt
             )
         }
@@ -166,16 +214,11 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             .take(Constants.HOME_FREQUENT_LIMIT)
             .map { it.first.id }
 
-        val zombieCutoff = ts - Constants.ZOMBIE_DAYS * dayMs
-        val zombies = active.filter { r ->
-            r.createdAt < zombieCutoff && (stats[r.id]?.lastTriggerAt ?: 0L) < zombieCutoff
+        // 7 天窗口判「僵尸」不公平，这一档整节不出现
+        val zombies = if (window.days in 1 until Constants.ZOMBIE_DAYS) emptyList() else active.filter { r ->
+            r.createdAt < since && (stats[r.id]?.lastTriggerAt ?: 0L) < since
         }
-        val high = active
-            .filter { (stats[it.id]?.triggers30 ?: 0) >= 3 }
-            .sortedByDescending { stats[it.id]?.triggers30 ?: 0 }
-            .take(5)
 
-        val todayStart = dayStart(ts)
         val todayLogs = logs.filter { it.createdAt >= todayStart }
 
         // 今天最新一条记录决定这条预案今天的显示状态
@@ -207,22 +250,17 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             .filter { it.second.createdAt >= todayStart }
             .sortedByDescending { it.second.createdAt }
             .map { it.first }
-        val oneOffWindow = ts - Constants.RULE_STATS_WINDOW_DAYS * dayMs
-        var od = 0
-        var om = 0
-        resolvedOneOff.forEach { r ->
-            val l = byRule[r.id]?.firstOrNull() ?: return@forEach
-            if (l.createdAt < oneOffWindow) return@forEach
-            if (r.status == RuleStatus.DONE.name) od++ else om++
+        val resolvedInWindow = resolvedOneOff.filter { r ->
+            (byRule[r.id]?.firstOrNull()?.createdAt ?: 0L) >= since
         }
-        val oneOffStats = OneOffStats(od, om, oneOffAll.size, late.size)
-        val done30Logs = logs.filter { it.done == true && it.createdAt >= since30 }
-        val heat = ArrayList<Int>(Constants.HEATMAP_DAYS)
-        for (i in Constants.HEATMAP_DAYS - 1 downTo 0) {
-            val d0 = todayStart - i * dayMs
-            val d1 = d0 + dayMs
-            heat.add(logs.count { it.done == true && it.createdAt >= d0 && it.createdAt < d1 })
-        }
+        val oneOffStats = OneOffStats(
+            doneRules = resolvedInWindow.filter { it.status == RuleStatus.DONE.name },
+            missedRules = resolvedInWindow.filter { it.status == RuleStatus.MISSED.name },
+            pendingRules = oneOffAll,
+            overdueRules = late
+        )
+        val doneLogs = logs.filter { it.done == true && it.createdAt >= since }
+        val heat = buildHeat(logs, todayStart, dayMs, window)
 
         val childrenOf = folders.groupBy { it.parentId }
         val crumbs = ArrayList<Folder>()
@@ -248,8 +286,8 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                     FolderSummary(
                         folder = f,
                         depth = depth,
-                        triggers30 = memberRules.sumOf { stats[it.id]?.triggers30 ?: 0 },
-                        done30 = memberRules.sumOf { stats[it.id]?.done30 ?: 0 }
+                        triggers = memberRules.sumOf { stats[it.id]?.triggers ?: 0 },
+                        done = memberRules.sumOf { stats[it.id]?.done ?: 0 }
                     )
                 )
                 walk(f.id, depth + 1)
@@ -257,12 +295,29 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         }
         walk(null, 0)
 
+        // 「全部」档下链条不能无限回溯，封顶 90 天并在标题上写实际天数
+        val allSpan = if (logs.isEmpty()) Constants.CHAIN_HEALTH_DAYS
+        else ((todayStart - logs.minOf { it.createdAt }) / dayMs).toInt() + 1
+        val healthDays = if (window.days == 0) {
+            allSpan.coerceIn(1, Constants.CHAIN_HEALTH_ALL_MAX_DAYS)
+        } else window.days
+
         val chain = ChainState.compute(
             allActive = active,
             inFolder = visibleRules,
             logs = logs,
-            todayStart = todayStart
+            todayStart = todayStart,
+            healthDays = healthDays
         )
+
+        val worst = active.mapNotNull { r ->
+            val s = stats[r.id] ?: return@mapNotNull null
+            val rate = s.rate(window) ?: return@mapNotNull null
+            WorstRule(r, s.triggers, s.done, rate)
+        }.minWithOrNull(compareBy<WorstRule> { it.rate }.thenByDescending { it.triggers })
+
+        val breakPoint = chain.health.filter { it.worstStep > 0 }
+            .maxByOrNull { it.breakAt.getOrElse(it.worstStep - 1) { 0 } }
 
         return AppUiState(
             activeRules = active,
@@ -270,8 +325,8 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             oneOffActive = onTime + late,
             oneOffResolvedToday = oneOffResolvedToday,
             oneOffOverdueDays = late.associate { it.id to ((todayStart - it.dueDate!!) / dayMs).toInt() + 1 },
-            miniDone30 = done30Logs.count { it.mini },
-            totalDone30 = done30Logs.size,
+            miniDone = doneLogs.count { it.mini },
+            totalDone = doneLogs.size,
             oneOffStats = oneOffStats,
             folders = folders,
             currentFolderId = folderId,
@@ -283,12 +338,66 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             todayStatusByRule = todayStatusByRule,
             folderSummaries = summaries,
             todayLogs = todayLogs,
-            heatmap = heat,
+            reviewWindow = window,
+            heat = heat,
             zombies = zombies,
-            highTriggers = high,
+            worst = worst,
+            breakPoint = breakPoint,
             ruleById = rules.associateBy { it.id },
             chain = chain
         )
+    }
+
+    /** 热力图：7/30 天一天一格，「全部」按周一格且只看最近 52 周 */
+    private fun buildHeat(
+        logs: List<ExecLog>,
+        todayStart: Long,
+        dayMs: Long,
+        window: ReviewWindow
+    ): Heat {
+        val fmt = SimpleDateFormat("M/d", Locale.CHINA)
+        val cells = ArrayList<HeatCell>()
+        if (window == ReviewWindow.ALL) {
+            val weekMs = 7 * dayMs
+            val thisWeek = weekStart(todayStart, dayMs)
+            val earliest = logs.minOfOrNull { it.createdAt } ?: todayStart
+            val weeks = (((thisWeek - earliest) / weekMs).toInt() + 1)
+                .coerceIn(1, Constants.HEATMAP_MAX_WEEKS)
+            for (i in weeks - 1 downTo 0) {
+                val w0 = thisWeek - i * weekMs
+                val w1 = w0 + weekMs
+                val inWeek = logs.filter { it.createdAt in w0 until w1 }
+                cells.add(
+                    HeatCell(
+                        label = "${fmt.format(Date(w0))} 那周",
+                        count = inWeek.count { it.done == true },
+                        isToday = i == 0,
+                        logs = inWeek
+                    )
+                )
+            }
+            return Heat(cells, byWeek = true)
+        }
+        for (i in window.days - 1 downTo 0) {
+            val d0 = todayStart - i * dayMs
+            val dayLogs = logs.filter { it.createdAt in d0 until d0 + dayMs }
+            cells.add(
+                HeatCell(
+                    label = fmt.format(Date(d0)),
+                    count = dayLogs.count { it.done == true },
+                    isToday = i == 0,
+                    logs = dayLogs
+                )
+            )
+        }
+        return Heat(cells, byWeek = false)
+    }
+
+    private fun weekStart(dayStartTs: Long, dayMs: Long): Long {
+        val c = Calendar.getInstance().apply { timeInMillis = dayStartTs }
+        val dow = c.get(Calendar.DAY_OF_WEEK)
+        val sinceMonday = if (dow == Calendar.SUNDAY) 6 else dow - Calendar.MONDAY
+        return dayStartTs - sinceMonday * dayMs
     }
 
     private fun dayStart(ts: Long): Long {
@@ -610,6 +719,59 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             val settings = apiSettings.value
             val r = runCatching { aiClient.generateCandidates(settings, concern) }
             kotlinx.coroutines.withContext(Dispatchers.Main) { onResult(r) }
+        }
+    }
+
+    private val _aiReview = MutableStateFlow<AiReview>(AiReview.Idle)
+    val aiReview: StateFlow<AiReview> = _aiReview
+
+    /** 复盘点评只在用户点按时发请求；同一窗口同一份数据不重复发 */
+    fun requestReview(force: Boolean = false) {
+        if (_aiReview.value is AiReview.Loading) return
+        val state = ui.value
+        val payload = buildReviewPayload(state)
+        val fingerprint = payload.hashCode().toLong()
+        val cached = _aiReview.value
+        if (!force && cached is AiReview.Ready && cached.fingerprint == fingerprint) return
+        _aiReview.value = AiReview.Loading
+        viewModelScope.launch(Dispatchers.IO) {
+            val settings = apiSettings.value
+            val ids = state.activeRules.map { it.id }
+            val result: AiReview = runCatching { aiClient.reviewSummary(settings, payload) }
+                .fold({ AiReview.Ready(it, ids, fingerprint) }, { AiReview.Failed(it.message ?: "请求失败") })
+            kotlinx.coroutines.withContext(Dispatchers.Main) { _aiReview.value = result }
+        }
+    }
+
+    /** 发给接口的数据描述：编号预案清单 + 带时间的打卡流水（流水只引用编号） */
+    private fun buildReviewPayload(s: AppUiState): String {
+        val rules = s.activeRules
+        val indexOf = rules.withIndex().associate { (i, r) -> r.id to i + 1 }
+        val fmt = SimpleDateFormat("MM-dd HH:mm", Locale.CHINA)
+        return buildString {
+            append("时间范围：${s.reviewWindow.noun}。窗口内打卡 ${s.totalDone} 次，其中两分钟版 ${s.miniDone} 次。\n")
+            append("预案清单：\n")
+            rules.forEachIndexed { i, r ->
+                val st = s.stats[r.id] ?: RuleStat()
+                append("${i + 1}. 如果 ${r.ifText} → 就 ${r.thenText}（触发 ${st.triggers} 次，做了 ${st.done} 次）\n")
+            }
+            s.chain.health.forEach { h ->
+                append("链条「${h.title}」共 ${h.size} 步，${h.activeDays} 天里有动静，整条走完 ${h.fullDays} 天")
+                append(if (h.worstStep > 0) "，最常断在第 ${h.worstStep} 步\n" else "，没有断点\n")
+            }
+            s.worst?.let { append("执行率最低的一条：「${it.rule.ifText}」做了 ${it.done}/${it.triggers}\n") }
+            val logs = s.heat.cells.flatMap { it.logs }
+                .sortedByDescending { it.createdAt }
+                .take(Constants.AI_REVIEW_MAX_LOGS)
+            append("打卡流水（最近 ${logs.size} 条，倒序，#n 是上面的预案编号）：\n")
+            logs.forEach { l ->
+                val verdict = when (l.done) {
+                    true -> "做了" + if (l.mini) "（两分钟版）" else ""
+                    false -> "没做"
+                    null -> "待确认"
+                }
+                append("${fmt.format(Date(l.createdAt))} #${indexOf[l.ruleId] ?: 0} $verdict\n")
+            }
         }
     }
 
