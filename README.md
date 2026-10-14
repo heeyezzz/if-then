@@ -68,13 +68,40 @@ echo "sdk.dir=/path/to/android-sdk" > local.properties
 
 ## 性能
 
-两处掉帧的根源与对策。实测环境：REDMI K90 Pro Max（1200×2608 @ **120Hz**，帧预算 **8.3ms**）与 60Hz 模拟器，取 `dumpsys gfxinfo framestats` 的 UI 线程时间 + `atrace` 命名切片，交替 A/B 各 5–12 次。
+> **结论先行：下面这批改动经真机干净协议复测，没有测出可复现的收益。** 保留是因为原理上成立（少组合、少图层、主线程少算），不是因为数字变好。详见「复测记录」。
 
-- **点底部 tab 切页卡**：根源是**下一页在切页动画中途才首次组合**——`beyondViewportPageCount=1` 时跳页会让预组合窗口右移，把新页塞进动画帧。真机切片证实成本在 Compose 的动画回调（36ms），绘制只有 0.3ms。改成启动时预组合全部 4 页 → 首次进复盘最差帧 **67–71 → 29–30ms**（−57%）。代价：启动多 ~76ms
-- **点文件夹展开卡**：根源是**新插入的卡片在同一帧里被组合 + 测量布局**（`atrace`：`AndroidOwner:measureAndLayout` 63ms，其中 34ms 是 `Compose:recompose`）。注意 Compose 的 measure/layout 跑在 draw 窗口内部，所以 framestats 的"布局"列只有 0.1ms、看不见它。对策：左滑四个动作钮改成**首次左拖才组合**（静止时被卡片整个盖住却照样买单）、去掉 `clip + background/border` 里白建的图形层、无长按回调时不用 `combinedClickable`、`buildState` 移出主线程、复盘页链条分组 `remember` 缓存 → 展开最差帧 **198–205 → 80–120ms**（−45~60%）
-- **残余**：展开仍有单帧超预算，且实测呈**双峰**（同构建、同冷启动，要么 ~75ms 要么 ~120ms），说明有未被控制的状态量（CPU 频率档 / 热降频 / GC）。继续定位需要 Android Studio / Perfetto UI 的 layout-node 调用栈
-- **已实测排除，别再试**：`animateItemPlacement` 替换 `animateItem` · 把帧率状态移进 `graphicsLayer`（拖拽本来就不卡，78 帧全不超预算）· 关卡片阴影 · 去掉插入动画 · 去掉 `StreakChip` 的 `AnimatedContent` · **解绑无障碍服务**（GKD / 自动点击器 / 朗读都不是主因）—— 全部零收益或无可靠变化。**强制全量 AOT 后尖峰不消失**，说明不是 JIT 成本，Baseline Profile 治不了它
-- **模拟器会骗人**：模拟器上 12 张 ASCII 空壳卡展开只要 10ms，真机上 5 张真实卡片（链条序号 + 2min 行 + 连击 + 中文）要 80–120ms。**差 20 倍的是内容复杂度**，性能结论必须在真机上取
+- `HorizontalPager` 用 `beyondViewportPageCount = navItems.size - 1` 预组合全部 4 页
+- 左滑的四个动作钮改成**首次左拖才组合**（静止时被卡片整个盖住）
+- 去掉 `clip + background/border` 里白建的图形层；卡片无长按回调时用 `clickable` 而非 `combinedClickable`
+- `AppViewModel.ui` 的 `buildState` 加 `flowOn(Dispatchers.Default)`，不再在主线程重算全量分组/连击/热力图/链条
+- 复盘页的链条分组从 `LazyListScope` 提到 composable 作用域并 `remember` 缓存
+
+### 复测记录（REDMI K90 Pro Max，1200×2608 @120Hz，帧预算 8.3ms）
+
+协议：每次重装 → 冷启动 → 等 8s → `gfxinfo reset` → 单次动作 → 读 `framestats` 的 UI 线程时间（`SyncQueued − HandleInputStart`）。v0.5 与 v0.6 **交替**各 6 次。
+
+| 冷启动首次动作 | v0.5 | v0.6 |
+|---|---|---|
+| 展开📁早起（5 项） | 79.6 / 84.6 / 75.9 / 76.4 / 79.1 / 79.6 → **79.2ms** | 75.7 / 77.1 / 77.5 / 76.4 / 76.5 / 75.6 → **76.5ms** |
+| 点 tab → 复盘 | 34.1 / 29.7 / 29.6 / 39.0 / 31.6 / 28.6 → **32.1ms** | 33.0 / 37.0 / 43.1 / 28.7 / 31.6 / 37.8 → **35.2ms** |
+
+稳态（3 轮展开收起累积 1100+ 帧）两版也一样：`p90=6ms p95=7ms jank=0.00%`，都有一条 `p99≈44–53ms` 的长尾。
+
+**教训：之前记录的"198→80ms""67→29ms"是测量污染**——基线是在刚装完、启动工作未完成时测的，对照组环境已干净。任何单次最差帧的对比都不可信，必须交替 A/B + 多次。
+
+### 当前定位到的真实成本
+
+`atrace` 命名切片：最差帧是 `AndroidOwner:measureAndLayout` **102.6ms，自身 102.6ms、无子调用** —— 纯 measure/layout，不是重组、不是绘制录制、不是 GC。5 张真实卡片 ≈ 20ms/张。
+
+双峰（~77ms 与 ~122ms 两档）的候选：trace 里出现 `JIT compiling android.graphics.RuntimeShader.setFloatUniform`、`RippleDrawable`、`RippleAnimationSession`、`java.util.Formatter` —— **首次点击要编译水波纹的 GPU shader**，一次性成本，落进第一次交互。
+
+### 已实测排除（别再试）
+
+`animateItemPlacement` 替换 · 帧率状态移进 `graphicsLayer`（拖拽本来就不卡）· 关卡片阴影 · 去掉插入动画 · 去掉 `StreakChip` 的 `AnimatedContent` · 解绑无障碍服务（GKD / 自动点击器 / 朗读都不是主因）· alpha=1 时省图形层。**强制全量 AOT 后尖峰不消失**，所以不是 JIT 成本，Baseline Profile 治不了。
+
+### 模拟器会骗人
+
+模拟器上 12 张 ASCII 空壳卡展开只要 10ms，真机上 5 张真实卡片（链条序号 + 2min 行 + 连击 + 中文）要 76–128ms。**差 20 倍的是内容复杂度**，性能结论必须在真机上取。
 
 ## 已知未验证项
 
