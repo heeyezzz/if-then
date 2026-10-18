@@ -110,7 +110,7 @@ fun RuleEditScreen(
                 miniThen = it.miniThen
                 tags = it.tags
                 folderId = it.folderId
-                nextId = it.nextRuleId
+                nextId = vm.successorOf(ruleId)
                 kind = it.kind
                 dueDate = it.dueDate
             }
@@ -287,7 +287,6 @@ fun RuleEditScreen(
                             miniThen = miniThen.trim(),
                             tags = tags.trim(),
                             folderId = folderId,
-                            nextRuleId = if (oneOff) null else nextId,
                             kind = kind,
                             dueDate = if (oneOff) dueDate else null
                         )

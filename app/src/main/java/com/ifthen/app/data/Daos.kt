@@ -43,11 +43,41 @@ interface RuleDao {
     @Query("SELECT COALESCE(MAX(sortOrder), -1) FROM rules WHERE folderId IS :folderId")
     suspend fun maxSortOrder(folderId: Long?): Int
 
-    @Query("SELECT * FROM rules WHERE nextRuleId = :id LIMIT 1")
-    suspend fun predecessorOf(id: Long): Rule?
+    @Query("SELECT * FROM rules WHERE chainId = :chainId ORDER BY stepIndex ASC")
+    suspend fun chainMembers(chainId: Long): List<Rule>
 
-    @Query("UPDATE rules SET nextRuleId = :next WHERE id = :id")
-    suspend fun updateNext(id: Long, next: Long?)
+    @Query("UPDATE rules SET chainId = :chainId, stepIndex = :step WHERE id = :id")
+    suspend fun setMembership(id: Long, chainId: Long?, step: Int?)
+
+    @Query("SELECT DISTINCT chainId FROM rules WHERE chainId IS NOT NULL")
+    suspend fun referencedChainIds(): List<Long>
+
+    @Query("SELECT * FROM rules WHERE chainId IN (:chainIds)")
+    suspend fun rulesInChains(chainIds: List<Long>): List<Rule>
+}
+
+@Dao
+interface ChainDao {
+    @Query("SELECT * FROM chains")
+    fun observeAll(): Flow<List<Chain>>
+
+    @Query("SELECT * FROM chains WHERE id = :id")
+    suspend fun getById(id: Long): Chain?
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun upsert(chain: Chain): Long
+
+    @Update
+    suspend fun update(chain: Chain)
+
+    @Query("DELETE FROM chains WHERE id = :id")
+    suspend fun deleteById(id: Long)
+
+    @Query("DELETE FROM chains")
+    suspend fun deleteAll()
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun insertAll(chains: List<Chain>)
 }
 
 @Dao

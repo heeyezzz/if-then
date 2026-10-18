@@ -1,6 +1,7 @@
 package com.ifthen.app.ui.screens
 
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.Arrangement
@@ -13,11 +14,14 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.SwapVert
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Icon
@@ -36,12 +40,26 @@ import androidx.compose.runtime.setValue
 import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import com.ifthen.app.data.ChainStatus
 import com.ifthen.app.data.Folder
 import com.ifthen.app.data.Rule
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
+import androidx.compose.material3.Card
+import androidx.compose.material3.CardDefaults
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.rotate
+import com.ifthen.app.ui.components.InsertLineColor
 import com.ifthen.app.ui.AppUiState
 import com.ifthen.app.ui.AppViewModel
+import com.ifthen.app.ui.ChainState
 import com.ifthen.app.ui.RuleStat
 import com.ifthen.app.ui.SuccessChime
 import com.ifthen.app.ui.components.ChainCompleteBar
@@ -77,7 +95,10 @@ fun HomeScreen(
     var ruleToDelete by remember { mutableStateOf<Rule?>(null) }
     var movingRule by remember { mutableStateOf<Rule?>(null) }
     var sorting by remember { mutableStateOf(false) }
-    var chainOpen by remember { mutableStateOf<Long?>(null) }
+    val expandedChains by vm.expandedChains.collectAsState()
+    var menuFor by remember { mutableStateOf<Long?>(null) }
+    var archivedOpen by remember { mutableStateOf(false) }
+    var deletingChain by remember { mutableStateOf<Long?>(null) }
     val celebrate by vm.celebrate.collectAsState()
 
     val inFolder = state.currentFolderId != null
@@ -322,22 +343,53 @@ fun HomeScreen(
                                 )
                             }
                         } else {
-                            children.forEach { child ->
-                                item(key = "n" + child.id) {
+                            ChainState.groupsOf(children).forEach { g ->
+                                val head = g.rules.first()
+                                item(key = "n" + head.id) {
                                     Box(Modifier.animateItem()) {
-                                        RuleCard(
-                                            rule = child,
-                                            step = state.chain.chainPos[child.id]?.step,
-                                            stepExpanded = false,
-                                            onStepClick = null,
-                                            indented = true,
-                                            sortLabel = null,
-                                            movable = false,
-                                            canUp = false,
-                                            canDown = false,
-                                            onMoveStep = {},
-                                            onMoveEdge = {}
-                                        )
+                                        if (g.rules.size == 1) {
+                                            RuleCard(
+                                                rule = head,
+                                                step = state.chain.chainPos[head.id]?.step,
+                                                stepExpanded = false,
+                                                onStepClick = null,
+                                                indented = true,
+                                                sortLabel = null,
+                                                movable = false,
+                                                canUp = false,
+                                                canDown = false,
+                                                onMoveStep = {},
+                                                onMoveEdge = {}
+                                            )
+                                        } else {
+                                            // 链在这层当一个条目显示，不铺内部预案；点它进文件夹看/改
+                                            val cid = head.chainId
+                                            val chain = cid?.let { state.chainById[it] }
+                                            Box(Modifier.padding(start = 18.dp)) {
+                                                ChainRow(
+                                                    title = chain?.name ?: head.ifText,
+                                                    colorArgb = chain?.color,
+                                                    size = g.rules.size,
+                                                    doneToday = state.chain.todayByHead[head.id]?.doneToday ?: 0,
+                                                    expanded = false,
+                                                    archived = false,
+                                                    showMenu = false,
+                                                    sorting = false,
+                                                    sortLabel = null,
+                                                    canUp = false,
+                                                    canDown = false,
+                                                    onToggle = { vm.openFolder(folder.id) },
+                                                    onMenu = {},
+                                                    onEditChain = {},
+                                                    onToggleArchive = {},
+                                                    onColor = {},
+                                                    onDelete = {},
+                                                    onMoveStep = {},
+                                                    onMoveEdge = {},
+                                                    compact = true
+                                                )
+                                            }
+                                        }
                                     }
                                 }
                             }
@@ -350,24 +402,14 @@ fun HomeScreen(
                 item { SectionHeader(if (sorting) "预案（长按箭头可连续移动）" else "预案") }
                 groups.forEachIndexed { gi, group ->
                     val first = group.rules.first()
-                    val headId = state.chain.chainPos[first.id]?.headId ?: first.id
-                    val expanded = chainOpen == headId && group.rules.size > 1
-                    item(key = "g" + first.id) {
-                        Box(Modifier.animateItem()) {
-                            if (group.rules.size == 1 && group.offFolderTails.isEmpty()) {
-                                val pos = state.chain.chainPos[first.id]
+                    if (group.rules.size == 1 && group.offFolderTails.isEmpty()) {
+                        item(key = "g" + first.id) {
+                            Box(Modifier.animateItem()) {
                                 RuleCard(
                                     rule = first,
-                                    step = pos?.step,
+                                    step = state.chain.chainPos[first.id]?.step,
                                     stepExpanded = false,
-                                    onStepClick = if (pos != null && pos.step > 1) {
-                                        {
-                                            val pred = state.activeRules.firstOrNull { it.nextRuleId == first.id }
-                                            if (pred != null) {
-                                                onRecord("上一步「${pred.ifText}」在 ${folderLabel(pred.folderId)}")
-                                            }
-                                        }
-                                    } else null,
+                                    onStepClick = null,
                                     indented = false,
                                     sortLabel = if (sorting) "${gi + 1}" else null,
                                     movable = true,
@@ -376,48 +418,55 @@ fun HomeScreen(
                                     onMoveStep = { vm.moveRuleStep(first.id, it) },
                                     onMoveEdge = { top -> vm.moveRuleToEdge(first.id, top) }
                                 )
-                            } else {
-                                ChainRail {
-                                    group.rules.forEachIndexed { si, r ->
-                                        val pos = state.chain.chainPos[r.id]
-                                        RuleCard(
-                                            rule = r,
-                                            step = pos?.step ?: (si + 1),
-                                            stepExpanded = expanded,
-                                            onStepClick = { chainOpen = if (expanded) null else headId },
-                                            indented = false,
-                                            sortLabel = if (sorting) {
-                                                if (si == 0) "${gi + 1}" else ""
-                                            } else null,
-                                            movable = si == 0,
-                                            canUp = gi > 0,
-                                            canDown = gi < groups.lastIndex,
-                                            onMoveStep = { vm.moveRuleStep(first.id, it) },
-                                            onMoveEdge = { top -> vm.moveRuleToEdge(first.id, top) }
-                                        )
-                                    }
-                                    group.offFolderTails.forEach { tail ->
-                                        Text(
-                                            "↳ 在 ${folderLabel(tail.folderId)} ${tail.ifText}",
-                                            style = MaterialTheme.typography.bodySmall,
-                                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                            modifier = Modifier
-                                                .padding(start = 4.dp, bottom = 2.dp)
-                                                .clickable { tail.folderId?.let { vm.openFolder(it) } }
-                                        )
-                                    }
-                                    AnimatedVisibility(visible = expanded) {
-                                        ChainViewPanel(
-                                            path = group.rules,
-                                            offFolder = group.offFolderTails,
-                                            folderLabel = { folderLabel(it) },
-                                            onUnlink = { id ->
-                                                vm.unlinkAt(id) { msg -> msg?.let(onRecord) }
-                                            },
-                                            onEdit = { onEdit(it) },
-                                            onEditChain = { onEditChain(group.rules.first().id) }
-                                        )
-                                    }
+                            }
+                        }
+                    } else {
+                        val cid = first.chainId
+                        val chain = cid?.let { state.chainById[it] }
+                        val expanded = cid != null && cid in expandedChains
+                        val doneToday = state.chain.todayByHead[first.id]?.doneToday ?: 0
+                        item(key = "g" + first.id) {
+                            Box(Modifier.animateItem()) {
+                                ChainRow(
+                                    title = chain?.name ?: first.ifText,
+                                    colorArgb = chain?.color,
+                                    size = group.rules.size,
+                                    doneToday = doneToday,
+                                    expanded = expanded,
+                                    archived = false,
+                                    showMenu = menuFor == cid,
+                                    sorting = sorting,
+                                    sortLabel = if (sorting) "${gi + 1}" else null,
+                                    canUp = gi > 0,
+                                    canDown = gi < groups.lastIndex,
+                                    onToggle = { if (cid != null) vm.toggleChainExpanded(cid, !expanded) },
+                                    onMenu = { menuFor = if (menuFor == cid) null else cid },
+                                    onEditChain = { menuFor = null; onEditChain(first.id) },
+                                    onToggleArchive = { if (cid != null) { vm.archiveChain(cid); onRecord("已归档整条链") }; menuFor = null },
+                                    onColor = { c -> if (cid != null) vm.setChainColor(cid, c); menuFor = null },
+                                    onDelete = { menuFor = null; deletingChain = cid },
+                                    onMoveStep = { vm.moveRuleStep(first.id, it) },
+                                    onMoveEdge = { top -> vm.moveRuleToEdge(first.id, top) }
+                                )
+                            }
+                        }
+                        if (expanded && !sorting) {
+                            items(group.rules, key = { "gm" + it.id }) { r ->
+                                val pos = state.chain.chainPos[r.id]
+                                Box(Modifier.animateItem()) {
+                                    RuleCard(
+                                        rule = r,
+                                        step = pos?.step ?: 1,
+                                        stepExpanded = true,
+                                        onStepClick = null,
+                                        indented = true,
+                                        sortLabel = null,
+                                        movable = false,
+                                        canUp = false,
+                                        canDown = false,
+                                        onMoveStep = {},
+                                        onMoveEdge = {}
+                                    )
                                 }
                             }
                         }
@@ -432,6 +481,60 @@ fun HomeScreen(
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                         modifier = Modifier.fillMaxWidth().padding(vertical = 24.dp)
                     )
+                }
+            }
+            val archivedChains = state.chains.filter { it.status == ChainStatus.ARCHIVED.name }
+            if (archivedChains.isNotEmpty() && !sorting) {
+                item {
+                    Row(
+                        Modifier.fillMaxWidth().clip(RoundedCornerShape(12.dp))
+                            .clickable { archivedOpen = !archivedOpen }
+                            .padding(horizontal = 10.dp, vertical = 10.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Icon(
+                            imageVector = Icons.AutoMirrored.Filled.KeyboardArrowRight,
+                            contentDescription = if (archivedOpen) "收起已归档" else "展开已归档",
+                            tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier.size(20.dp).rotate(if (archivedOpen) 90f else 0f)
+                        )
+                        Spacer(Modifier.width(8.dp))
+                        Text(
+                            "已归档 ${archivedChains.size}",
+                            style = MaterialTheme.typography.labelLarge,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                }
+                if (archivedOpen) {
+                    archivedChains.forEach { ch ->
+                        val memCount = state.archivedRules.count { it.chainId == ch.id }
+                        item(key = "arc" + ch.id) {
+                            Box(Modifier.animateItem()) {
+                                ChainRow(
+                                    title = ch.name,
+                                    colorArgb = ch.color,
+                                    size = memCount,
+                                    doneToday = 0,
+                                    expanded = false,
+                                    archived = true,
+                                    showMenu = menuFor == ch.id,
+                                    sorting = false,
+                                    sortLabel = null,
+                                    canUp = false,
+                                    canDown = false,
+                                    onToggle = {},
+                                    onMenu = { menuFor = if (menuFor == ch.id) null else ch.id },
+                                    onEditChain = {},
+                                    onToggleArchive = { vm.unarchiveChain(ch.id); onRecord("已取消归档") },
+                                    onColor = { c -> vm.setChainColor(ch.id, c) },
+                                    onDelete = { deletingChain = ch.id },
+                                    onMoveStep = {},
+                                    onMoveEdge = {}
+                                )
+                            }
+                        }
+                    }
                 }
             }
             item { Spacer(Modifier.height(72.dp)) }
@@ -548,4 +651,142 @@ fun HomeScreen(
             dismissButton = { TextButton(onClick = { pendingDelete = null }) { Text("取消") } }
         )
     }
+
+    deletingChain?.let { cid ->
+        AlertDialog(
+            onDismissRequest = { deletingChain = null },
+            title = { Text("删除整条链？") },
+            text = { Text("只拆链：成员预案和打卡都留着，退回文件夹。\n连预案一起删：这些预案及其打卡记录永久删除，无法恢复。") },
+            confirmButton = {
+                Column {
+                    TextButton(onClick = { vm.deleteChain(cid, false) { onRecord(it) }; deletingChain = null }) { Text("只拆链") }
+                    TextButton(onClick = { vm.deleteChain(cid, true) { onRecord(it) }; deletingChain = null }) { Text("连预案一起删") }
+                }
+            },
+            dismissButton = { TextButton(onClick = { deletingChain = null }) { Text("取消") } }
+        )
+    }
+}
+
+/** 折叠态的链摘要行：与 FolderRow 同一套卡片语言（14dp 圆角、按链色 tinted 容器、40dp 圆形箭头盒） */
+@Composable
+private fun ChainRow(
+    title: String,
+    colorArgb: Int?,
+    size: Int,
+    doneToday: Int,
+    expanded: Boolean,
+    archived: Boolean,
+    showMenu: Boolean,
+    sorting: Boolean,
+    sortLabel: String?,
+    canUp: Boolean,
+    canDown: Boolean,
+    onToggle: () -> Unit,
+    onMenu: () -> Unit,
+    onEditChain: () -> Unit,
+    onToggleArchive: () -> Unit,
+    onColor: (Int?) -> Unit,
+    onDelete: () -> Unit,
+    onMoveStep: (Int) -> Unit,
+    onMoveEdge: (Boolean) -> Unit,
+    compact: Boolean = false
+) {
+    val accent = colorArgb?.let { Color(it) } ?: InsertLineColor
+    val container = if (archived) MaterialTheme.colorScheme.surfaceVariant else accent.copy(alpha = 0.10f)
+    val palette = listOf<Int?>(null, 0xFFEF5350.toInt(), 0xFFFFB300.toInt(), 0xFF66BB6A.toInt(), 0xFF42A5F5.toInt(), 0xFFAB47BC.toInt())
+    val card: @Composable () -> Unit = {
+        Card(
+            Modifier.fillMaxWidth(),
+            shape = RoundedCornerShape(14.dp),
+            colors = CardDefaults.cardColors(containerColor = container)
+        ) {
+            Column {
+                Row(
+                    Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 12.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Box(Modifier.size(12.dp).clip(CircleShape).background(accent))
+                    Spacer(Modifier.width(12.dp))
+                    Column(Modifier.weight(1f)) {
+                        Text(
+                            title,
+                            style = MaterialTheme.typography.bodyLarge,
+                            fontWeight = FontWeight.Medium,
+                            color = MaterialTheme.colorScheme.onSurface,
+                            maxLines = 1
+                        )
+                        Text(
+                            if (archived) "$size 步 · 已归档" else "$size 步 · 今日 $doneToday/$size",
+                            style = MaterialTheme.typography.labelMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                    if (!sorting) {
+                        Box(
+                            Modifier.size(40.dp).clip(CircleShape)
+                                .clickable(enabled = !archived) { onToggle() },
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Icon(
+                                imageVector = Icons.AutoMirrored.Filled.KeyboardArrowRight,
+                                contentDescription = when {
+                                    compact -> "进入文件夹"
+                                    expanded -> "收起整条链"
+                                    else -> "展开整条链"
+                                },
+                                tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                                modifier = Modifier.size(22.dp).rotate(if (expanded) 90f else 0f)
+                            )
+                        }
+                        if (!compact) {
+                            Box(
+                                Modifier.size(40.dp).clip(CircleShape).clickable { onMenu() },
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Filled.MoreVert,
+                                    contentDescription = "链操作",
+                                    tint = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
+                        }
+                    }
+                }
+                if (showMenu && !sorting) {
+                    Row(
+                        Modifier.fillMaxWidth().padding(start = 12.dp, end = 12.dp, bottom = 10.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        if (!archived) TextButton(onClick = onEditChain) { Text("编辑整串") }
+                        TextButton(onClick = onToggleArchive) { Text(if (archived) "取消归档" else "归档") }
+                        palette.forEachIndexed { di, c ->
+                            Box(
+                                Modifier.size(20.dp).padding(2.dp).clip(CircleShape)
+                                    .background(c?.let { Color(it) } ?: InsertLineColor.copy(alpha = 0.3f))
+                                    .semantics { contentDescription = "链色$di" }
+                                    .clickable { onColor(c) }
+                            )
+                        }
+                        Spacer(Modifier.weight(1f))
+                        TextButton(onClick = onDelete) { Text("删除整串", color = MaterialTheme.colorScheme.error) }
+                    }
+                }
+            }
+        }
+    }
+    if (sorting) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Box(Modifier.weight(1f)) { card() }
+            SortPad(
+                label = sortLabel ?: "",
+                movable = true,
+                canUp = canUp,
+                canDown = canDown,
+                onMove = onMoveStep,
+                onEdge = onMoveEdge,
+                onBlocked = {}
+            )
+        }
+    } else card()
 }

@@ -13,6 +13,8 @@ import com.ifthen.app.data.ApiSettings
 import com.ifthen.app.data.AppDatabase
 import com.ifthen.app.data.BackupRepository
 import com.ifthen.app.data.Chain
+import com.ifthen.app.data.ChainGraph
+import com.ifthen.app.data.ChainStatus
 import com.ifthen.app.data.ExecLog
 import com.ifthen.app.data.Folder
 import com.ifthen.app.data.Rule
@@ -119,6 +121,8 @@ data class AppUiState(
     val worst: WorstRule? = null,
     val breakPoint: ChainHealth? = null,
     val ruleById: Map<Long, Rule> = emptyMap(),
+    val chains: List<Chain> = emptyList(),
+    val chainById: Map<Long, Chain> = emptyMap(),
     val chain: ChainSnapshot = ChainSnapshot()
 )
 
@@ -151,9 +155,10 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         db.ruleDao().observeAll(),
         db.execLogDao().observeSince(0L),
         db.folderDao().observeAll(),
+        db.chainDao().observeAll(),
         combine(now, currentFolderId, reviewWindow) { t, f, w -> Triple(t, f, w) }
-    ) { rules, logs, folders, extra ->
-        buildState(rules, logs, folders, extra.first, extra.second, extra.third)
+    ) { rules, logs, folders, chains, extra ->
+        buildState(rules, logs, folders, chains, extra.first, extra.second, extra.third)
     }
         // buildState 要重算全量分组/连击/热力图/链条，放在主线程会在每次数据变化时卡住 UI
         .flowOn(Dispatchers.Default)
@@ -172,6 +177,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         rules: List<Rule>,
         logs: List<ExecLog>,
         folders: List<Folder>,
+        chains: List<Chain>,
         ts: Long,
         folderId: Long?,
         window: ReviewWindow
@@ -345,6 +351,8 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             worst = worst,
             breakPoint = breakPoint,
             ruleById = rules.associateBy { it.id },
+            chains = chains,
+            chainById = chains.associateBy { it.id },
             chain = chain
         )
     }
@@ -459,7 +467,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             val msg = if (toOneOff) {
                 val splice = spliceOut(ruleId)
                 db.ruleDao().update(
-                    r.copy(kind = RuleKind.ONE_OFF.name, nextRuleId = null, status = RuleStatus.ACTIVE.name)
+                    r.copy(kind = RuleKind.ONE_OFF.name, chainId = null, stepIndex = null, status = RuleStatus.ACTIVE.name)
                 )
                 "已改为一次性" + (splice?.let { " · $it" } ?: "")
             } else {
@@ -477,7 +485,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
 
     private suspend fun chainCompletedHead(ruleId: Long): Long? {
         val active = db.ruleDao().observeAll().first().filter { it.status == RuleStatus.ACTIVE.name }
-        val path = Chain.chains(active).firstOrNull { p -> p.any { it.id == ruleId } } ?: return null
+        val path = ChainGraph.paths(active).firstOrNull { p -> p.any { it.id == ruleId } } ?: return null
         val done = db.execLogDao().observeSince(dayStart(System.currentTimeMillis())).first()
             .filter { it.done == true }.mapTo(HashSet()) { it.ruleId }
         return path.first().id.takeIf { path.all { it.id in done } }
@@ -508,6 +516,15 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
 
     suspend fun getRule(id: Long): Rule? = db.ruleDao().getById(id)
 
+    /** 某预案在其链里的后继 id；不在链里或已是末步则 null */
+    suspend fun successorOf(ruleId: Long): Long? = withContext(Dispatchers.IO) {
+        val r = db.ruleDao().getById(ruleId) ?: return@withContext null
+        val cid = r.chainId ?: return@withContext null
+        val m = db.ruleDao().chainMembers(cid)
+        val i = m.indexOfFirst { it.id == ruleId }
+        if (i >= 0 && i < m.lastIndex) m[i + 1].id else null
+    }
+
     fun setArchived(rule: Rule, archived: Boolean) = viewModelScope.launch(Dispatchers.IO) {
         if (archived) spliceOut(rule.id)
         db.ruleDao().update(
@@ -515,75 +532,186 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         )
     }
 
-    /** 删除：链条中间的节点被抽走时，前驱直接接上它的后继 */
+    /** 删除：成员被抽走时先愈合它所在的链，再删预案 */
     fun deleteRule(rule: Rule, onResult: (String) -> Unit = {}) = viewModelScope.launch(Dispatchers.IO) {
-        val pred = db.ruleDao().predecessorOf(rule.id)
-        val tail = rule.nextRuleId?.let { db.ruleDao().getById(it) }
-        if (pred != null) db.ruleDao().updateNext(pred.id, if (tail != null && tail.status == RuleStatus.ACTIVE.name) tail.id else null)
+        val note = spliceOut(rule.id)
         db.execLogDao().deleteForRules(listOf(rule.id))
         db.ruleDao().delete(rule)
-        val msg = if (pred != null && tail != null && tail.id != pred.id) {
-            "已删除 · 链条已接上「${pred.ifText} → ${tail.ifText}」"
-        } else "已删除"
-        kotlinx.coroutines.withContext(Dispatchers.Main) { onResult(msg) }
+        kotlinx.coroutines.withContext(Dispatchers.Main) {
+            onResult(note?.let { "已删除 · $it" } ?: "已删除")
+        }
     }
 
-    /** 把节点从链条里抽走，前后自动接上；返回给用户看的一句说明 */
+    /** 把节点从它所在的链里摘走，其余按序愈合；链掉到不足 2 步则整条散开 */
     private suspend fun spliceOut(id: Long): String? {
         val self = db.ruleDao().getById(id) ?: return null
-        val pred = db.ruleDao().predecessorOf(id) ?: return null
-        val tail = self.nextRuleId?.let { db.ruleDao().getById(it) }
-        db.ruleDao().updateNext(pred.id, tail?.id)
-        return tail?.let { "已从链条摘出「${pred.ifText} → ${it.ifText}」" }
-            ?: "已从链条摘出「${pred.ifText}」之后"
+        val cid = self.chainId ?: return null
+        val members = db.ruleDao().chainMembers(cid)
+        db.ruleDao().setMembership(id, null, null)
+        val rest = members.filter { it.id != id }
+        if (rest.size < 2) {
+            rest.forEach { db.ruleDao().setMembership(it.id, null, null) }
+            db.chainDao().deleteById(cid)
+            return "所在链条只剩一步，已散开"
+        }
+        rest.forEachIndexed { i, r -> db.ruleDao().setMembership(r.id, cid, i) }
+        return "已从链条摘出「${self.ifText}」，前后接上"
     }
 
     // ---- 链条连接 ----
 
-    /** 候选：非自己、无前驱、接上不会成环；一次性预案不参与链条 */
+    /** 候选：活跃长期预案，排除自己和已在同一链里的成员（实体模型不成环，无需 wouldCycle） */
     suspend fun linkCandidates(selfId: Long): List<Rule> {
         val active = db.ruleDao().observeAll().first()
             .filter { it.status == RuleStatus.ACTIVE.name && !it.isOneOff }
-        return Chain.linkCandidates(active, selfId)
+        val myChain = db.ruleDao().getById(selfId)?.chainId
+        val inMyChain = if (myChain != null) db.ruleDao().chainMembers(myChain).map { it.id }.toSet()
+        else emptySet()
+        return active.filter { it.id != selfId && it.id !in inMyChain }
     }
 
     fun linkNext(fromId: Long, toId: Long?, onResult: (String?) -> Unit = {}) = viewModelScope.launch(Dispatchers.IO) {
-        val active = db.ruleDao().observeAll().first()
-            .filter { it.status == RuleStatus.ACTIVE.name && !it.isOneOff }
-        val next = Chain.sanitizedNext(active)
-        if (toId != null) {
-            if (Chain.wouldCycle(fromId, toId, next)) {
-                kotlinx.coroutines.withContext(Dispatchers.Main) { onResult("接上去会形成循环，已拒绝") }
-                return@launch
-            }
-            // 每个节点最多一个前驱：目标已有前驱就把那条边挪走
-            active.firstOrNull { next[it.id] == toId && it.id != fromId }
-                ?.let { db.ruleDao().updateNext(it.id, null) }
-        }
-        db.ruleDao().updateNext(fromId, toId)
-        val size = if (toId == null) 0 else {
-            val reloaded = db.ruleDao().observeAll().first()
-                .filter { it.status == RuleStatus.ACTIVE.name && !it.isOneOff }
-            Chain.chains(reloaded).firstOrNull { p -> p.any { it.id == fromId } }?.size ?: 0
-        }
-        val msg = when {
-            toId == null -> "已取消连接"
-            size > Constants.CHAIN_MAX_STEPS -> "已接上 · 这条链已有 $size 步，建议拆成两条"
-            else -> null
-        }
+        val msg = if (toId == null) unlinkAfter(fromId) else attachNext(fromId, toId)
         kotlinx.coroutines.withContext(Dispatchers.Main) { onResult(msg) }
     }
 
-    /** 在该节点处断开（切断进入它的那条边）；它自己的后继成为新头部 */
+    /** 让 toId 紧跟 fromId：toId 若在原链先摘出愈合，再插到 fromId 之后 */
+    private suspend fun attachNext(fromId: Long, toId: Long): String? {
+        val from = db.ruleDao().getById(fromId) ?: return null
+        val to = db.ruleDao().getById(toId) ?: return null
+        if (from.chainId != null && from.chainId == to.chainId) {
+            val cid = from.chainId!!
+            val ids = db.ruleDao().chainMembers(cid).map { it.id }.toMutableList()
+            ids.remove(toId)
+            val at = (ids.indexOf(fromId) + 1).coerceAtLeast(0)
+            ids.add(at, toId)
+            ids.forEachIndexed { i, rid -> db.ruleDao().setMembership(rid, cid, i) }
+            return sizeNote(cid)
+        }
+        if (to.chainId != null) spliceOut(toId)
+        val cid: Long = from.chainId ?: db.chainDao().upsert(
+            Chain(name = from.ifText, folderId = from.folderId, createdAt = System.currentTimeMillis())
+        ).also { db.ruleDao().setMembership(fromId, it, 0) }
+        val members = db.ruleDao().chainMembers(cid).toMutableList()
+        val at = (members.indexOfFirst { it.id == fromId } + 1).coerceAtLeast(0)
+        members.add(at, to)
+        members.forEachIndexed { i, r -> db.ruleDao().setMembership(r.id, cid, i) }
+        db.chainDao().getById(cid)?.let { ch -> if (ch.folderId != from.folderId) db.chainDao().update(ch.copy(folderId = from.folderId)) }
+        return sizeNote(cid)
+    }
+
+    /** 把 fromId 的后继断开：其后成员另起新链，不足 2 步退回散预案 */
+    private suspend fun unlinkAfter(fromId: Long): String? {
+        val from = db.ruleDao().getById(fromId) ?: return null
+        val cid = from.chainId ?: return "已取消连接"
+        val members = db.ruleDao().chainMembers(cid)
+        val idx = members.indexOfFirst { it.id == fromId }
+        if (idx < 0 || idx == members.lastIndex) return "已取消连接"
+        val head = members.subList(0, idx + 1)
+        val tail = members.subList(idx + 1, members.size)
+        if (head.size < 2) { head.forEach { db.ruleDao().setMembership(it.id, null, null) }; db.chainDao().deleteById(cid) }
+        else head.forEachIndexed { i, r -> db.ruleDao().setMembership(r.id, cid, i) }
+        if (tail.size >= 2) {
+            val ncid = db.chainDao().upsert(
+                Chain(name = tail.first().ifText, folderId = tail.first().folderId, createdAt = System.currentTimeMillis())
+            )
+            tail.forEachIndexed { i, r -> db.ruleDao().setMembership(r.id, ncid, i) }
+        } else tail.forEach { db.ruleDao().setMembership(it.id, null, null) }
+        return "已取消连接"
+    }
+
+    /** 在该节点处断开：它及其后继另起新链，前段留原链 */
     fun unlinkAt(ruleId: Long, onResult: (String?) -> Unit = {}) = viewModelScope.launch(Dispatchers.IO) {
-        val pred = db.ruleDao().predecessorOf(ruleId)
-        if (pred == null) {
+        val r = db.ruleDao().getById(ruleId)
+        val cid = r?.chainId
+        if (cid == null) {
+            kotlinx.coroutines.withContext(Dispatchers.Main) { onResult("这条不在任何链条里") }
+            return@launch
+        }
+        val members = db.ruleDao().chainMembers(cid)
+        val idx = members.indexOfFirst { it.id == ruleId }
+        if (idx <= 0) {
             kotlinx.coroutines.withContext(Dispatchers.Main) { onResult("这条就是链条开头，没有可断开的连接") }
             return@launch
         }
-        db.ruleDao().updateNext(pred.id, null)
+        val head = members.subList(0, idx)
+        val tail = members.subList(idx, members.size)
+        if (head.size < 2) { head.forEach { db.ruleDao().setMembership(it.id, null, null) }; db.chainDao().deleteById(cid) }
+        else head.forEachIndexed { i, x -> db.ruleDao().setMembership(x.id, cid, i) }
+        if (tail.size >= 2) {
+            val ncid = db.chainDao().upsert(
+                Chain(name = r.ifText, folderId = r.folderId, createdAt = System.currentTimeMillis())
+            )
+            tail.forEachIndexed { i, x -> db.ruleDao().setMembership(x.id, ncid, i) }
+        } else db.ruleDao().setMembership(ruleId, null, null)
         kotlinx.coroutines.withContext(Dispatchers.Main) { onResult("已在这里断开") }
     }
+
+    private suspend fun sizeNote(cid: Long): String? {
+        val size = db.ruleDao().chainMembers(cid).size
+        return if (size > Constants.CHAIN_MAX_STEPS) "已接上 · 这条链已有 $size 步，建议拆成两条" else null
+    }
+
+    // ---- 链级操作（实体化后） ----
+
+    val expandedChains: StateFlow<Set<Long>> = settingsRepo.expandedChains
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptySet())
+
+    fun toggleChainExpanded(chainId: Long, expanded: Boolean) = viewModelScope.launch(Dispatchers.IO) {
+        settingsRepo.setChainExpanded(chainId, expanded)
+    }
+
+    fun renameChain(chainId: Long, name: String) = viewModelScope.launch(Dispatchers.IO) {
+        db.chainDao().getById(chainId)?.let {
+            val n = name.trim()
+            if (n.isNotEmpty()) db.chainDao().update(it.copy(name = n))
+        }
+    }
+
+    fun setChainColor(chainId: Long, color: Int?) = viewModelScope.launch(Dispatchers.IO) {
+        db.chainDao().getById(chainId)?.let { db.chainDao().update(it.copy(color = color)) }
+    }
+
+    /** 整条链挪到别的文件夹：改链的夹，成员预案的夹跟着走 */
+    fun setChainFolder(chainId: Long, folderId: Long?) = viewModelScope.launch(Dispatchers.IO) {
+        db.chainDao().getById(chainId)?.let { db.chainDao().update(it.copy(folderId = folderId)) }
+        db.ruleDao().chainMembers(chainId).forEach { r ->
+            if (r.folderId != folderId) {
+                db.ruleDao().update(r.copy(folderId = folderId, sortOrder = db.ruleDao().maxSortOrder(folderId) + 1))
+            }
+        }
+    }
+
+    /** 归档整条链：链与成员一并置归档，退出活动首页与复盘统计，不删 */
+    fun archiveChain(chainId: Long) = setChainArchived(chainId, true)
+    fun unarchiveChain(chainId: Long) = setChainArchived(chainId, false)
+
+    private fun setChainArchived(chainId: Long, archived: Boolean) = viewModelScope.launch(Dispatchers.IO) {
+        val st = if (archived) ChainStatus.ARCHIVED.name else ChainStatus.ACTIVE.name
+        db.chainDao().getById(chainId)?.let { db.chainDao().update(it.copy(status = st)) }
+        val rs = if (archived) RuleStatus.ARCHIVED.name else RuleStatus.ACTIVE.name
+        db.ruleDao().chainMembers(chainId).forEach { db.ruleDao().update(it.copy(status = rs)) }
+    }
+
+    /** 删整串：deleteRules=false 只拆链留预案，=true 连成员预案带打卡一起删 */
+    fun deleteChain(chainId: Long, deleteRules: Boolean, onResult: (String) -> Unit = {}) =
+        viewModelScope.launch(Dispatchers.IO) {
+            val members = db.ruleDao().chainMembers(chainId)
+            if (deleteRules) {
+                val ids = members.map { it.id }
+                db.execLogDao().deleteForRules(ids)
+                db.ruleDao().deleteByIds(ids)
+            } else {
+                members.forEach { db.ruleDao().setMembership(it.id, null, null) }
+            }
+            db.chainDao().deleteById(chainId)
+            withContext(Dispatchers.Main) {
+                onResult(
+                    if (deleteRules) "已删除整条链（含 ${members.size} 步预案与打卡）"
+                    else "已拆链，${members.size} 步预案留在文件夹"
+                )
+            }
+        }
 
     // ---- 排序 ----
 
@@ -659,14 +787,11 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     /** 链条整串保存：一行一步，id=0 是还没入库的新步骤；broken 表示这一步与前一步之间断开 */
     data class ChainStep(val id: Long, val ifText: String, val thenText: String, val broken: Boolean)
 
-    /** 读一条链作为整串编辑的初值 */
+    /** 读一条链作为整串编辑的初值（headId 为链头预案 id） */
     suspend fun chainSteps(headId: Long): List<ChainStep> = withContext(Dispatchers.IO) {
-        val active = db.ruleDao().observeAll().first()
-            .filter { it.status == RuleStatus.ACTIVE.name && !it.isOneOff }
-        val next = Chain.sanitizedNext(active)
-        Chain.walk(headId, next, active.associateBy { it.id }).map {
-            ChainStep(it.id, it.ifText, it.thenText, false)
-        }
+        val r = db.ruleDao().getById(headId) ?: return@withContext emptyList()
+        val cid = r.chainId ?: return@withContext emptyList()
+        db.ruleDao().chainMembers(cid).map { ChainStep(it.id, it.ifText, it.thenText, false) }
     }
 
     /** 可作为「换成已有的」的候选：活跃长期预案，排除已在本串里的；带上它现有的链位置供界面标注 */
@@ -675,7 +800,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             val active = db.ruleDao().observeAll().first()
                 .filter { it.status == RuleStatus.ACTIVE.name && !it.isOneOff }
             val pos = HashMap<Long, ChainPos>()
-            Chain.chains(active).forEach { path ->
+            ChainGraph.paths(active).forEach { path ->
                 path.forEachIndexed { i, r -> pos[r.id] = ChainPos(path.first().id, i + 1, path.size) }
             }
             active.filter { it.id !in inUse }
@@ -685,43 +810,90 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                 )
         }
 
-    fun saveChain(steps: List<ChainStep>, folderId: Long?, onResult: (String) -> Unit) =
+    fun saveChain(steps: List<ChainStep>, name: String, folderId: Long?, onResult: (String) -> Unit) =
         viewModelScope.launch(Dispatchers.IO) {
-            val ids = ArrayList<Long>()
-            val kept = ArrayList<ChainStep>()
-            steps.forEach { s ->
-                val ifText = s.ifText.trim(); val thenText = s.thenText.trim()
-                if (s.id > 0L) {
-                    val r = db.ruleDao().getById(s.id) ?: return@forEach
-                    if (r.ifText != ifText || r.thenText != thenText || r.folderId != folderId) {
-                        db.ruleDao().update(r.copy(ifText = ifText, thenText = thenText, folderId = folderId))
-                    }
-                    ids.add(r.id); kept.add(s.copy(ifText = ifText, thenText = thenText))
-                } else if (ifText.isNotBlank() && thenText.isNotBlank()) {
-                    val id = db.ruleDao().upsert(
-                        Rule(
-                            ifText = ifText, thenText = thenText, folderId = folderId,
-                            sortOrder = db.ruleDao().maxSortOrder(folderId) + 1,
-                            kind = RuleKind.REPEATING.name
+            // 1) 行按 broken 拆段，跳过空的新行
+            val segments = ArrayList<MutableList<ChainStep>>()
+            var cur = ArrayList<ChainStep>()
+            steps.forEachIndexed { i, s ->
+                val ifT = s.ifText.trim(); val thT = s.thenText.trim()
+                if (s.id == 0L && (ifT.isBlank() || thT.isBlank())) return@forEachIndexed
+                val row = s.copy(ifText = ifT, thenText = thT)
+                if (i > 0 && s.broken && cur.isNotEmpty()) { segments.add(cur); cur = ArrayList(); cur.add(row) }
+                else cur.add(row)
+            }
+            if (cur.isNotEmpty()) segments.add(cur)
+            if (segments.isEmpty()) {
+                withContext(Dispatchers.Main) { onResult("没有可保存的步骤") }; return@launch
+            }
+
+            // 2) 每行落成入库的 ruleId（新行建散预案，旧行改文字+夹）
+            val segIds = segments.map { seg ->
+                seg.mapNotNull { s ->
+                    if (s.id > 0L) {
+                        val r = db.ruleDao().getById(s.id) ?: return@mapNotNull null
+                        if (r.ifText != s.ifText || r.thenText != s.thenText || r.folderId != folderId)
+                            db.ruleDao().update(r.copy(ifText = s.ifText, thenText = s.thenText, folderId = folderId))
+                        r.id
+                    } else {
+                        db.ruleDao().upsert(
+                            Rule(
+                                ifText = s.ifText, thenText = s.thenText, folderId = folderId,
+                                sortOrder = db.ruleDao().maxSortOrder(folderId) + 1,
+                                kind = RuleKind.REPEATING.name
+                            )
                         )
-                    )
-                    ids.add(id); kept.add(s.copy(ifText = ifText, thenText = thenText))
+                    }
                 }
             }
-            // 先清掉所有牵涉这批节点的边（含别人指向它们的边），再按行序重接：幂等，不怕中间态
-            val set = ids.toSet()
-            db.ruleDao().observeAll().first().forEach { r ->
-                val n = r.nextRuleId
-                if (n != null && (r.id in set || n in set)) db.ruleDao().updateNext(r.id, null)
+
+            // 3) 被编辑的链 = 第一个已存在行所在的链；其中不再出现的步退回散预案
+            val editedChainId = steps.firstOrNull { it.id > 0L }?.let { db.ruleDao().getById(it.id)?.chainId }
+            if (editedChainId != null) {
+                val keep = segIds.flatten().toSet()
+                db.ruleDao().chainMembers(editedChainId)
+                    .forEach { if (it.id !in keep) db.ruleDao().setMembership(it.id, null, null) }
             }
-            var start = 0
-            (kept.indices.filter { kept[it].broken && it > 0 } + kept.size).forEach { mark ->
-                for (i in start until mark - 1) db.ruleDao().updateNext(ids[i], ids[i + 1])
-                start = mark
+
+            // 4) 逐段挂链：首段复用被编辑链(或新建)并用名字框命名，其余各建新链；段不足 2 步就散
+            val trimmed = name.trim()
+            var chainCount = 0
+            segIds.forEachIndexed { si, ids ->
+                if (ids.isEmpty()) return@forEachIndexed
+                if (ids.size < 2) {
+                    ids.forEach { db.ruleDao().setMembership(it, null, null) }
+                    return@forEachIndexed
+                }
+                val headIf = db.ruleDao().getById(ids.first())?.ifText ?: "未命名链"
+                val autoName = if (si == 0 && trimmed.isNotEmpty()) trimmed else headIf
+                val cid = if (si == 0 && editedChainId != null) {
+                    db.chainDao().getById(editedChainId)?.let {
+                        db.chainDao().update(it.copy(name = autoName, folderId = folderId))
+                    }
+                    editedChainId
+                } else {
+                    db.chainDao().upsert(
+                        Chain(name = autoName, folderId = folderId, createdAt = System.currentTimeMillis())
+                    )
+                }
+                ids.forEachIndexed { i, rid -> db.ruleDao().setMembership(rid, cid, i) }
+                chainCount += 1
             }
-            val chains = kept.indices.count { kept[it].broken && it > 0 } + 1
+
+            // 5) 统一步散与重排：不足 2 步的残链解散，够长的按 0..n-1 补齐连续序号（覆盖换已有留下的空洞）
+            db.ruleDao().referencedChainIds().forEach { cid ->
+                val m = db.ruleDao().chainMembers(cid)
+                if (m.size < 2) {
+                    m.forEach { db.ruleDao().setMembership(it.id, null, null) }
+                    db.chainDao().deleteById(cid)
+                } else {
+                    m.forEachIndexed { i, r -> if (r.stepIndex != i) db.ruleDao().setMembership(r.id, cid, i) }
+                }
+            }
+
+            val total = segIds.sumOf { it.size }
             withContext(Dispatchers.Main) {
-                onResult(if (chains > 1) "已保存 ${ids.size} 步，拆成 $chains 段" else "已保存 ${ids.size} 步链")
+                onResult(if (chainCount > 1) "已保存 $total 步，拆成 $chainCount 条链" else "已保存 $total 步链")
             }
         }
 
@@ -757,13 +929,16 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     fun deleteFolderCascade(folderId: Long) = viewModelScope.launch(Dispatchers.IO) {
         val ids = subtreeIds(folderId)
         val rules = db.ruleDao().rulesInFolders(ids)
-        val doomed = rules.map { it.id }.toSet()
         db.execLogDao().deleteForRules(rules.map { it.id })
         db.ruleDao().deleteByIds(rules.map { it.id })
         ids.forEach { db.folderDao().deleteById(it) }
-        // 存活预案里指向已删节点的链条指针要清掉
-        db.ruleDao().observeAll().first().forEach { r ->
-            r.nextRuleId?.let { if (it in doomed) db.ruleDao().updateNext(r.id, null) }
+        // 成员被删后掉到不足 2 步、或所在夹已被删的链，一并解散：剩余成员退回散预案
+        db.chainDao().observeAll().first().forEach { ch ->
+            val m = db.ruleDao().chainMembers(ch.id)
+            if (m.size < 2 || (ch.folderId != null && ch.folderId in ids)) {
+                m.forEach { db.ruleDao().setMembership(it.id, null, null) }
+                db.chainDao().deleteById(ch.id)
+            }
         }
         if (currentFolderId.value?.let { it in ids } == true) {
             currentFolderId.value = null

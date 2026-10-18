@@ -102,12 +102,10 @@ fun ReviewScreen(
     val plan = remember(state.folderSummaries, state.activeRules) {
         state.folderSummaries.map { fs ->
             fs to ChainState.groupsOf(
-                state.activeRules.filter { it.folderId == fs.folder.id },
-                state.activeRules
+                state.activeRules.filter { it.folderId == fs.folder.id }
             )
         } to ChainState.groupsOf(
-            state.activeRules.filter { it.folderId == null },
-            state.activeRules
+            state.activeRules.filter { it.folderId == null }
         )
     }
     val logGroups = remember(state.todayLogs, state.chain.chainPos, state.ruleById) {

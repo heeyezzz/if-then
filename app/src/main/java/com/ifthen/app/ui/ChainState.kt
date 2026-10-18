@@ -1,7 +1,7 @@
 package com.ifthen.app.ui
 
 import com.ifthen.app.Constants
-import com.ifthen.app.data.Chain
+import com.ifthen.app.data.ChainGraph
 import com.ifthen.app.data.ExecLog
 import com.ifthen.app.data.Rule
 
@@ -49,7 +49,7 @@ object ChainState {
         todayStart: Long,
         healthDays: Int
     ): ChainSnapshot {
-        val chains = Chain.chains(allActive)
+        val chains = ChainGraph.paths(allActive)
         if (chains.isEmpty()) {
             return ChainSnapshot(groups = inFolder.map { RuleGroup(listOf(it)) })
         }
@@ -102,7 +102,7 @@ object ChainState {
 
         return ChainSnapshot(
             chainPos = pos,
-            groups = groupsOf(inFolder, allActive),
+            groups = groupsOf(inFolder),
             todayByHead = todayByHead,
             nextStep = best,
             healthDays = healthDays,
@@ -110,39 +110,26 @@ object ChainState {
         )
     }
 
-    /** 同一文件夹视图内按指针聚成组；异夹后继退化成角标 */
-    fun groupsOf(inFolder: List<Rule>, allActive: List<Rule>): List<RuleGroup> {
-        if (inFolder.none { it.nextRuleId != null }) return inFolder.map { RuleGroup(listOf(it)) }
-        val next = Chain.sanitizedNext(allActive)
-        val byId = allActive.associateBy { it.id }
-        val here = inFolder.mapTo(HashSet()) { it.id }
-        val consumed = HashSet<Long>()
+    /**
+     * 文件夹视图内的渲染分组：链（成员>=2）聚成一组，其余退成单条。
+     * 链是单夹实体，成员都带同一个 chainId，所以整串都落在这个文件夹里。
+     */
+    fun groupsOf(inFolder: List<Rule>): List<RuleGroup> {
         val out = ArrayList<RuleGroup>()
-        for (start in inFolder) {
-            if (start.id in consumed) continue
-            val pred = allActive.firstOrNull { next[it.id] == start.id }
-            if (pred != null && pred.id in here) continue
-            val path = ArrayList<Rule>()
-            val extras = ArrayList<Rule>()
-            var id: Long? = start.id
-            var guard = 0
-            while (id != null && guard++ < Constants.CHAIN_MAX_STEPS) {
-                val node = byId[id] ?: break
-                if (node.id in here) {
-                    if (node.id in consumed) break
-                    path.add(node)
-                    consumed.add(node.id)
-                    id = next[node.id]
-                } else {
-                    extras.add(node)
-                    break
+        val consumed = HashSet<Long>()
+        inFolder.asSequence()
+            .filter { it.chainId != null }
+            .groupBy { it.chainId!! }
+            .mapValues { (_, ms) -> ms.sortedBy { it.stepIndex ?: 0 } }
+            .values
+            .forEach { members ->
+                if (members.size >= 2) {
+                    out.add(RuleGroup(members, emptyList()))
+                    members.forEach { consumed.add(it.id) }
                 }
             }
-            if (path.isNotEmpty()) out.add(RuleGroup(path, extras))
-        }
-        // 指针异常（成环被破边）时兜底：没被任何组收下的预案各自成组，避免首页丢条目
-        val shown = out.flatMap { it.rules }.mapTo(HashSet()) { it.id }
-        inFolder.forEach { if (it.id !in shown) out.add(RuleGroup(listOf(it))) }
+        // 没被任何链收下的（散预案 + 掉到 1 的残链）各自成组，保证首页不丢条目
+        inFolder.forEach { if (it.id !in consumed) out.add(RuleGroup(listOf(it))) }
         return out
     }
 

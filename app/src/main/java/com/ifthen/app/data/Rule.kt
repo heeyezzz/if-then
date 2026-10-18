@@ -22,8 +22,10 @@ data class Rule(
     val triggerConfig: String? = null,
     val folderId: Long? = null,
     val sortOrder: Int = 0,
-    // 链条：做完这条之后接哪条。null = 这条不是任何链条的中间节点
-    val nextRuleId: Long? = null,
+    // 链实体化：所属链的 id，null = 散预案（不在任何链里）
+    val chainId: Long? = null,
+    // 链内序号（0 起），null = 不在链里
+    val stepIndex: Int? = null,
     val kind: String = RuleKind.REPEATING.name,
     // 一次性预案的可选到期日（本地当天 0 点毫秒）；只用于提醒，到期不自动改状态
     val dueDate: Long? = null,

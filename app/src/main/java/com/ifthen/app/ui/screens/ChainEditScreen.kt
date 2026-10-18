@@ -81,6 +81,8 @@ fun ChainEditScreen(
     val rows = remember { mutableStateListOf<StepRow>() }
     var uidSeed by remember { mutableStateOf(1L) }
     var folderId by remember { mutableStateOf(defaultFolderId) }
+    var chainName by remember { mutableStateOf("") }
+    var initialName by remember { mutableStateOf("") }
     var loaded by remember { mutableStateOf(headId <= 0L) }
     var initial by remember { mutableStateOf<List<StepRow>>(emptyList()) }
     var initialFolder by remember { mutableStateOf<Long?>(defaultFolderId) }
@@ -101,6 +103,9 @@ fun ChainEditScreen(
             initial = rows.toList()
             initialFolder = state.ruleById[headId]?.folderId
             folderId = initialFolder
+            val cid = state.ruleById[headId]?.chainId
+            chainName = cid?.let { state.chainById[it]?.name } ?: ""
+            initialName = chainName
             loaded = true
         }
     }
@@ -142,6 +147,15 @@ fun ChainEditScreen(
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
                 }
+            }
+            item {
+                OutlinedTextField(
+                    value = chainName,
+                    onValueChange = { chainName = it },
+                    label = { Text("这条链叫什么（留空自动用第一句「如果」）") },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth()
+                )
             }
             item {
                 Card(
@@ -257,7 +271,9 @@ fun ChainEditScreen(
     }
 
     if (showReview) {
-        val diff = diffOf(initial, rows.toList(), initialFolder, folderId)
+        val diff = diffOf(initial, rows.toList(), initialFolder, folderId).toMutableList()
+        val wantName = chainName.trim()
+        if (wantName.isNotEmpty() && wantName != initialName.trim()) diff.add(0, "改名为「$wantName」")
         AlertDialog(
             onDismissRequest = { showReview = false },
             title = { Text("要写进数据库的改动") },
@@ -272,6 +288,7 @@ fun ChainEditScreen(
                     showReview = false
                     vm.saveChain(
                         rows.map { AppViewModel.ChainStep(it.id, it.ifText, it.thenText, it.broken) },
+                        chainName,
                         folderId
                     ) { msg -> onToast(msg); onDone() }
                 }) { Text("确认保存") }
