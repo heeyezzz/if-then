@@ -1044,13 +1044,27 @@ fun ChainViewPanel(
     folderLabel: (Long?) -> String,
     onUnlink: (Long) -> Unit,
     onEdit: (Long) -> Unit,
+    onEditChain: () -> Unit,
     modifier: Modifier = Modifier
 ) {
     Card(
         modifier = modifier.fillMaxWidth(),
         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)
     ) {
-        Column(Modifier.padding(start = 12.dp, end = 6.dp, top = 6.dp, bottom = 6.dp)) {
+        Column(Modifier.padding(start = 12.dp, end = 6.dp, top = 2.dp, bottom = 6.dp)) {
+            Row(
+                Modifier.fillMaxWidth().clickable { onEditChain() }.padding(vertical = 6.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text(
+                    "整串编辑 · ${path.size} 步",
+                    style = MaterialTheme.typography.labelMedium,
+                    color = MaterialTheme.colorScheme.primary,
+                    modifier = Modifier.weight(1f)
+                )
+                Text("›", style = MaterialTheme.typography.labelLarge,
+                    color = MaterialTheme.colorScheme.primary)
+            }
             path.forEachIndexed { i, r ->
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Text(

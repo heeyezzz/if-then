@@ -30,6 +30,7 @@ import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.flowOn
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import java.text.SimpleDateFormat
 import java.util.Calendar
 import java.util.Date
@@ -652,6 +653,75 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                         folderId = folderId, sortOrder = order++, kind = kind
                     )
                 )
+            }
+        }
+
+    /** 链条整串保存：一行一步，id=0 是还没入库的新步骤；broken 表示这一步与前一步之间断开 */
+    data class ChainStep(val id: Long, val ifText: String, val thenText: String, val broken: Boolean)
+
+    /** 读一条链作为整串编辑的初值 */
+    suspend fun chainSteps(headId: Long): List<ChainStep> = withContext(Dispatchers.IO) {
+        val active = db.ruleDao().observeAll().first()
+            .filter { it.status == RuleStatus.ACTIVE.name && !it.isOneOff }
+        val next = Chain.sanitizedNext(active)
+        Chain.walk(headId, next, active.associateBy { it.id }).map {
+            ChainStep(it.id, it.ifText, it.thenText, false)
+        }
+    }
+
+    /** 可作为「换成已有的」的候选：活跃长期预案，排除已在本串里的；带上它现有的链位置供界面标注 */
+    suspend fun chainPickable(inUse: Set<Long>): List<Pair<Rule, ChainPos?>> =
+        withContext(Dispatchers.IO) {
+            val active = db.ruleDao().observeAll().first()
+                .filter { it.status == RuleStatus.ACTIVE.name && !it.isOneOff }
+            val pos = HashMap<Long, ChainPos>()
+            Chain.chains(active).forEach { path ->
+                path.forEachIndexed { i, r -> pos[r.id] = ChainPos(path.first().id, i + 1, path.size) }
+            }
+            active.filter { it.id !in inUse }
+                .map { it to pos[it.id] }
+                .sortedWith(
+                    compareBy({ it.second?.headId ?: -1L }, { it.second?.step ?: 0 })
+                )
+        }
+
+    fun saveChain(steps: List<ChainStep>, folderId: Long?, onResult: (String) -> Unit) =
+        viewModelScope.launch(Dispatchers.IO) {
+            val ids = ArrayList<Long>()
+            val kept = ArrayList<ChainStep>()
+            steps.forEach { s ->
+                val ifText = s.ifText.trim(); val thenText = s.thenText.trim()
+                if (s.id > 0L) {
+                    val r = db.ruleDao().getById(s.id) ?: return@forEach
+                    if (r.ifText != ifText || r.thenText != thenText || r.folderId != folderId) {
+                        db.ruleDao().update(r.copy(ifText = ifText, thenText = thenText, folderId = folderId))
+                    }
+                    ids.add(r.id); kept.add(s.copy(ifText = ifText, thenText = thenText))
+                } else if (ifText.isNotBlank() && thenText.isNotBlank()) {
+                    val id = db.ruleDao().upsert(
+                        Rule(
+                            ifText = ifText, thenText = thenText, folderId = folderId,
+                            sortOrder = db.ruleDao().maxSortOrder(folderId) + 1,
+                            kind = RuleKind.REPEATING.name
+                        )
+                    )
+                    ids.add(id); kept.add(s.copy(ifText = ifText, thenText = thenText))
+                }
+            }
+            // 先清掉所有牵涉这批节点的边（含别人指向它们的边），再按行序重接：幂等，不怕中间态
+            val set = ids.toSet()
+            db.ruleDao().observeAll().first().forEach { r ->
+                val n = r.nextRuleId
+                if (n != null && (r.id in set || n in set)) db.ruleDao().updateNext(r.id, null)
+            }
+            var start = 0
+            (kept.indices.filter { kept[it].broken && it > 0 } + kept.size).forEach { mark ->
+                for (i in start until mark - 1) db.ruleDao().updateNext(ids[i], ids[i + 1])
+                start = mark
+            }
+            val chains = kept.indices.count { kept[it].broken && it > 0 } + 1
+            withContext(Dispatchers.Main) {
+                onResult(if (chains > 1) "已保存 ${ids.size} 步，拆成 $chains 段" else "已保存 ${ids.size} 步链")
             }
         }
 

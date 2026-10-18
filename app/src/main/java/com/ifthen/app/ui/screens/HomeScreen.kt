@@ -62,6 +62,7 @@ fun HomeScreen(
     vm: AppViewModel,
     state: AppUiState,
     onEdit: (Long) -> Unit,
+    onEditChain: (Long) -> Unit,
     onRecord: (String) -> Unit,
     modifier: Modifier = Modifier
 ) {
@@ -413,7 +414,8 @@ fun HomeScreen(
                                             onUnlink = { id ->
                                                 vm.unlinkAt(id) { msg -> msg?.let(onRecord) }
                                             },
-                                            onEdit = { onEdit(it) }
+                                            onEdit = { onEdit(it) },
+                                            onEditChain = { onEditChain(group.rules.first().id) }
                                         )
                                     }
                                 }
