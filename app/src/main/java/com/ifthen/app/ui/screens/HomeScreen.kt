@@ -210,7 +210,7 @@ fun HomeScreen(
             item {
                 val cur = state.crumbs.lastOrNull()
                 TitleBar(
-                    title = cur?.name ?: "果然",
+                    title = cur?.name ?: "布谷",
                     emoji = cur?.emoji,
                     onBack = if (inFolder && !sorting) {
                         { vm.openFolder(cur?.parentId) }

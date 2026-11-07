@@ -1,25 +1,12 @@
 <?xml version="1.0" encoding="utf-8"?>
-<vector xmlns:android="http://schemas.android.com/apk/res/android"
-    android:width="108dp"
-    android:height="108dp"
-    android:viewportWidth="108"
-    android:viewportHeight="108">
-    <!-- 菱形＝决策点，箭头＝那就执行；几何按参考图量出并放进 66dp 安全区（描边 3.3，圆头圆角） -->
-    <path
-        android:strokeColor="#FFFFFF"
-        android:strokeWidth="3.3"
-        android:strokeLineCap="round"
-        android:strokeLineJoin="round"
-        android:pathData="M40.3,36.7 L57.7,54 L40.3,71.3 L23,54 Z" />
-    <path
-        android:strokeColor="#FFFFFF"
-        android:strokeWidth="3.3"
-        android:strokeLineCap="round"
-        android:pathData="M57.7,54 L85,54" />
-    <path
-        android:strokeColor="#FFFFFF"
-        android:strokeWidth="3.3"
-        android:strokeLineCap="round"
-        android:strokeLineJoin="round"
-        android:pathData="M76,45 L85,54 L76,63" />
-</vector>
+<!-- 布谷鸟钟前景：原图缩进 18% 放进 66dp 安全区，避免圆形遮罩切到屋顶与摆锤；
+     原图自带奶油底 #F8F4EE，与背景层同色，缩进环带无缝。 -->
+<inset xmlns:android="http://schemas.android.com/apk/res/android"
+    android:insetLeft="18%"
+    android:insetTop="18%"
+    android:insetRight="18%"
+    android:insetBottom="18%">
+    <bitmap
+        android:src="@drawable/ic_launcher_clock"
+        android:gravity="fill" />
+</inset>

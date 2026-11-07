@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Android 13+ 主题图标单色层：从原图精确提取的轮廓（透明底），与前景同样缩进 18%。 -->
+<inset xmlns:android="http://schemas.android.com/apk/res/android"
+    android:insetLeft="18%"
+    android:insetTop="18%"
+    android:insetRight="18%"
+    android:insetBottom="18%">
+    <bitmap
+        android:src="@drawable/ic_launcher_mono"
+        android:gravity="fill" />
+</inset>

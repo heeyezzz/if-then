@@ -31,8 +31,8 @@ android {
         applicationId = "com.ifthen.app"
         minSdk = 26
         targetSdk = 35
-        versionCode = 10
-        versionName = "0.10.0"
+        versionCode = 11
+        versionName = "0.11.0"
     }
 
     buildTypes {
