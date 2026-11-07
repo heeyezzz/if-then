@@ -10,7 +10,7 @@ data class Folder(
     @PrimaryKey(autoGenerate = true) val id: Long = 0,
     val name: String,
     val emoji: String = "📁",
-    val color: Long = 0xFF1F6E5C,
+    val color: Long = 0xFF2B4CE0,
     val parentId: Long? = null,
     val sortOrder: Int = 0,
     val createdAt: Long = System.currentTimeMillis()

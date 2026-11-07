@@ -96,10 +96,10 @@ import kotlin.math.abs
 import kotlin.math.roundToInt
 
 val FolderEmojis = listOf("📁", "🌙", "☀️", "💼", "🏋️", "📚", "🍔", "🧘", "✈️", "🌱")
-val FolderColors = listOf(0xFF1F6E5C, 0xFF2F5DA8, 0xFF6A4FA3, 0xFFB8860B, 0xFF8C4A2F, 0xFF0F7B7B)
+val FolderColors = listOf(0xFF2B4CE0, 0xFF2F5DA8, 0xFF6A4FA3, 0xFFB8860B, 0xFF8C4A2F, 0xFF0F7B7B)
 
-/** 插入指示线：深绿（与主色一致的品牌色） */
-val InsertLineColor = Color(0xFF1F6E5C)
+/** 插入指示线：克莱因蓝（与图标一致的品牌色） */
+val InsertLineColor = Color(0xFF2B4CE0)
 
 val ActionMiss = Color(0xFFE08A2E)
 /** 动作钮列宽与间距：露出宽度由它们算出，避免卡片压住最左侧按钮 */
