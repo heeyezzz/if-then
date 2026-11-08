@@ -9,6 +9,8 @@ import com.ifthen.app.ReviewWindow
 import com.ifthen.app.ai.AiCandidate
 import com.ifthen.app.ai.DeepSeekClient
 import com.ifthen.app.ai.ReviewInsight
+import com.ifthen.app.update.UpdateChecker
+import com.ifthen.app.update.UpdateInfo
 import com.ifthen.app.data.ApiSettings
 import com.ifthen.app.data.AppDatabase
 import com.ifthen.app.data.BackupRepository
@@ -139,6 +141,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     private val settingsRepo = SettingsRepository(app)
     private val backupRepo = BackupRepository(app)
     private val aiClient = DeepSeekClient()
+    private val updateChecker = UpdateChecker()
 
     val apiSettings: StateFlow<ApiSettings> = settingsRepo.apiSettings
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), ApiSettings("", "", ""))
@@ -1023,6 +1026,13 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     fun testApi(s: ApiSettings, onResult: (Result<Int>) -> Unit) {
         viewModelScope.launch(Dispatchers.IO) {
             val r = runCatching { aiClient.testConnection(s) }
+            kotlinx.coroutines.withContext(Dispatchers.Main) { onResult(r) }
+        }
+    }
+
+    fun checkUpdate(currentVersion: String, onResult: (Result<UpdateInfo>) -> Unit) {
+        viewModelScope.launch(Dispatchers.IO) {
+            val r = runCatching { updateChecker.check(currentVersion) }
             kotlinx.coroutines.withContext(Dispatchers.Main) { onResult(r) }
         }
     }

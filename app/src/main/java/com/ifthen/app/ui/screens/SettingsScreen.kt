@@ -30,7 +30,16 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
+import android.content.Intent
+import android.net.Uri
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.heightIn
+import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.platform.LocalContext
+import com.ifthen.app.BuildConfig
 import com.ifthen.app.ui.AppViewModel
+import com.ifthen.app.update.UpdateInfo
 
 @Composable
 fun SettingsScreen(
@@ -46,6 +55,10 @@ fun SettingsScreen(
     var confirmImport by rememberSaveable { mutableStateOf(false) }
     var pendingImportUri by remember { mutableStateOf<android.net.Uri?>(null) }
     var testing by remember { mutableStateOf(false) }
+    var checking by remember { mutableStateOf(false) }
+    var latestInfo by remember { mutableStateOf<UpdateInfo?>(null) }
+    var showUpdate by remember { mutableStateOf(false) }
+    val context = LocalContext.current
 
     LaunchedEffect(settings, initialized) {
         if (!initialized && settings.baseUrl.isNotBlank()) {
@@ -149,6 +162,51 @@ fun SettingsScreen(
                 onClick = { importLauncher.launch(arrayOf("application/json", "text/plain", "*/*")) },
                 modifier = Modifier.fillMaxWidth()
             ) { Text("从 JSON 恢复") }
+
+            Spacer(Modifier.height(12.dp))
+            Text("关于", style = MaterialTheme.typography.titleMedium)
+            Row(
+                Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text("当前版本")
+                Text(
+                    "v${BuildConfig.VERSION_NAME}",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+            OutlinedButton(
+                enabled = !checking,
+                onClick = {
+                    checking = true
+                    vm.checkUpdate(BuildConfig.VERSION_NAME) { r ->
+                        checking = false
+                        r.onSuccess { info ->
+                            if (info.isNewer) {
+                                latestInfo = info
+                                showUpdate = true
+                            } else {
+                                onToast("已是最新版本 v${BuildConfig.VERSION_NAME}")
+                            }
+                        }.onFailure { onToast("检查更新失败：${it.message}") }
+                    }
+                },
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                if (checking) {
+                    CircularProgressIndicator(modifier = Modifier.size(18.dp), strokeWidth = 2.dp)
+                    Text("  检查中…")
+                } else {
+                    Text("检查更新")
+                }
+            }
+            Text(
+                "从 GitHub Releases 获取最新版本",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
             Spacer(Modifier.height(60.dp))
         }
     }
@@ -170,6 +228,41 @@ fun SettingsScreen(
                 }) { Text("覆盖导入") }
             },
             dismissButton = { TextButton(onClick = { confirmImport = false }) { Text("取消") } }
+        )
+    }
+
+    if (showUpdate && latestInfo != null) {
+        val info = latestInfo!!
+        AlertDialog(
+            onDismissRequest = { showUpdate = false },
+            title = { Text("发现新版本 ${info.tagName}") },
+            text = {
+                Column(Modifier.heightIn(max = 320.dp).verticalScroll(rememberScrollState())) {
+                    Text(
+                        "当前版本 v${BuildConfig.VERSION_NAME}",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    if (info.notes.isNotBlank()) {
+                        Spacer(Modifier.height(8.dp))
+                        Text(info.notes.trim().take(600), style = MaterialTheme.typography.bodyMedium)
+                    }
+                }
+            },
+            confirmButton = {
+                TextButton(onClick = {
+                    showUpdate = false
+                    runCatching {
+                        context.startActivity(
+                            Intent(Intent.ACTION_VIEW, Uri.parse(info.releaseUrl))
+                                .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                        )
+                    }.onFailure { onToast("打不开下载页") }
+                }) { Text("去下载") }
+            },
+            dismissButton = {
+                TextButton(onClick = { showUpdate = false }) { Text("以后再说") }
+            }
         )
     }
 }
