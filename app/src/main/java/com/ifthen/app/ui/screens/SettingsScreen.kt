@@ -245,7 +245,7 @@ fun SettingsScreen(
                     )
                     if (info.notes.isNotBlank()) {
                         Spacer(Modifier.height(8.dp))
-                        Text(info.notes.trim().take(600), style = MaterialTheme.typography.bodyMedium)
+                        Text(formatReleaseNotes(info.notes).take(900), style = MaterialTheme.typography.bodyMedium)
                     }
                 }
             },
@@ -265,4 +265,21 @@ fun SettingsScreen(
             }
         )
     }
+}
+
+/** 把 Release 说明里的轻量 Markdown 变纯文本：去标题井号、列表短横改圆点、去粗体星号和代码标记、压掉多余空行 */
+private fun formatReleaseNotes(raw: String): String {
+    val lines = raw.replace("\r\n", "\n").split("\n").map { line ->
+        val t = line.trimStart()
+        when {
+            t.startsWith("#") -> t.trimStart('#').trim()
+            t.startsWith("- ") || t.startsWith("* ") || t.startsWith("+ ") -> "• " + t.drop(2).trim()
+            else -> line.trimEnd()
+        }
+    }
+    return lines.joinToString("\n")
+        .replace("**", "")
+        .replace("```", "")
+        .replace(Regex("\n{3,}"), "\n\n")
+        .trim()
 }
