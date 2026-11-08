@@ -844,12 +844,7 @@ fun Heatmap(
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
             Text(
-                if (heat.byWeek) "一格 = 一周" else "一格 = 一天",
-                style = MaterialTheme.typography.labelSmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant
-            )
-            Text(
-                "框住的是今天",
+                (if (heat.byWeek) "一格 = 一周" else "一格 = 一天") + " · 框住的是今天",
                 style = MaterialTheme.typography.labelSmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )

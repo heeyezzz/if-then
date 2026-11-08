@@ -25,6 +25,10 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
+import androidx.compose.material.icons.filled.Archive
+import androidx.compose.material.icons.filled.AutoAwesome
+import androidx.compose.material.icons.filled.Insights
+import androidx.compose.material.icons.filled.Leaderboard
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
@@ -48,6 +52,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.rotate
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
@@ -86,15 +91,11 @@ fun ReviewScreen(
 ) {
     var showPickRule by rememberSaveable { mutableStateOf(false) }
     var openTrend by rememberSaveable { mutableStateOf(true) }
-    var openChain by rememberSaveable { mutableStateOf(false) }
-    var openOneOff by rememberSaveable { mutableStateOf(false) }
-    var openZombies by rememberSaveable { mutableStateOf(false) }
     var openArchived by rememberSaveable { mutableStateOf(false) }
     var openRanked by rememberSaveable { mutableStateOf(false) }
     var worstFirst by rememberSaveable { mutableStateOf(true) }
     var heatCell by rememberSaveable { mutableStateOf(-1) }
     var deleteTarget by rememberSaveable { mutableStateOf(0L) }
-    var oneOffTab by rememberSaveable { mutableStateOf("") }
     val ai by vm.aiReview.collectAsStateWithLifecycle()
 
     // 分组在 composable 作用域里算一次并缓存：留在 LazyListScope 里每次重组都会重跑
@@ -121,13 +122,10 @@ fun ReviewScreen(
     val openLogGroups = remember { mutableStateMapOf<Long, Boolean>() }
 
     // 长按任意节头 = 整页收纳/展开。结论卡和 AI 块不参与，收了这页就没结论了
-    val anySectionOpen = openTrend || openChain || openOneOff || openZombies || openArchived ||
-        openRanked || logGroups.any { openLogGroups[it.key] != false }
+    val anySectionOpen = openTrend || openArchived || openRanked ||
+        logGroups.any { openLogGroups[it.key] != false }
     fun setAllSections(expand: Boolean) {
         openTrend = expand
-        openChain = expand
-        openOneOff = expand
-        openZombies = expand
         openArchived = expand
         openRanked = expand
         logGroups.forEach { openLogGroups[it.key] = expand }
@@ -152,8 +150,9 @@ fun ReviewScreen(
                 }
             }
 
-            item(key = "insight") { InsightCard(state, onEdit) }
-            item(key = "ai") { AiReviewCard(ai, state, onEdit) { vm.requestReview(it) } }
+            item(key = "conclusion") {
+                InsightCard(state = state, ai = ai, onEdit = onEdit) { vm.requestReview(it) }
+            }
 
             item(key = "h-today") {
                 SectionHeader(
@@ -188,6 +187,7 @@ fun ReviewScreen(
                 CollapsibleHeader(
                     "趋势 · ${state.reviewWindow.noun}", openTrend,
                     summary = "${state.totalDone} 次 · 今天 ${state.heat.cells.lastOrNull()?.count ?: 0}",
+                    icon = Icons.Filled.Insights,
                     onToggle = { openTrend = !openTrend },
                     onLongPress = { setAllSections(!anySectionOpen) }
                 )
@@ -202,66 +202,12 @@ fun ReviewScreen(
                 }
             }
 
-            if (state.zombies.isNotEmpty()) {
-                item(key = "h-zombie") {
-                    CollapsibleHeader(
-                        "僵尸预案 · ${state.zombies.size} 条", openZombies,
-                        onToggle = { openZombies = !openZombies },
-                        onLongPress = { setAllSections(!anySectionOpen) }
-                    )
-                }
-                if (openZombies) {
-                    items(state.zombies, key = { "z${it.id}" }) { rule ->
-                        ZombieRow(
-                            rule.ifText, rule.thenText,
-                            onArchive = { vm.setArchived(rule, true) },
-                            onEdit = { onEdit(rule.id) }
-                        )
-                    }
-                }
-            }
-
-            if (state.chain.health.isNotEmpty()) {
-                item(key = "h-chain") {
-                    CollapsibleHeader(
-                        title = "链条健康 · 近 ${state.chain.healthDays} 天",
-                        expanded = openChain,
-                        summary = state.breakPoint?.let { "断在第 ${it.worstStep} 步" } ?: "无断点",
-                        onToggle = { openChain = !openChain },
-                        onLongPress = { setAllSections(!anySectionOpen) }
-                    )
-                }
-                if (openChain) {
-                    items(state.chain.health, key = { "c${it.headId}" }) { h ->
-                        ChainHealthRow(h, onEditStep = { id -> onEdit(id) })
-                    }
-                }
-            }
-
-            run {
-                val s = state.oneOffStats
-                if (s.done + s.missed + s.pending + s.overdue > 0) {
-                    item(key = "h-oneoff") {
-                        CollapsibleHeader(
-                            "一次性 · 战绩", openOneOff,
-                            summary = "${s.done} 完成 · ${s.pending} 待办",
-                            onToggle = { openOneOff = !openOneOff },
-                            onLongPress = { setAllSections(!anySectionOpen) }
-                        )
-                    }
-                    if (openOneOff) {
-                        item(key = "oneoff") {
-                            OneOffCard(s, tab = oneOffTab, onPick = { oneOffTab = if (oneOffTab == it) "" else it })
-                        }
-                    }
-                }
-            }
-
             item(key = "h-all") {
                 CollapsibleHeader(
                     title = "全部战绩",
                     expanded = openRanked,
                     summary = rankedSummary(state),
+                    icon = Icons.Filled.Leaderboard,
                     action = if (!openRanked) null else {
                         {
                             Row(horizontalArrangement = Arrangement.spacedBy(2.dp)) {
@@ -339,6 +285,7 @@ fun ReviewScreen(
                 item(key = "h-archived") {
                     CollapsibleHeader(
                         "已归档 · ${state.archivedRules.size} 条", openArchived,
+                        icon = Icons.Filled.Archive,
                         onToggle = { openArchived = !openArchived },
                         onLongPress = { setAllSections(!anySectionOpen) }
                     )
@@ -414,15 +361,20 @@ private fun WindowPicker(current: ReviewWindow, onPick: (ReviewWindow) -> Unit) 
     }
 }
 
-/** 结论卡：只放两条能动手的判断，点了直接跳那条预案的编辑页 */
+/** 结论卡：体检结论 + AI 补一句（合并成一张卡，AI 作为卡内一条轻量补充） */
 @Composable
-private fun InsightCard(state: AppUiState, onEdit: (Long) -> Unit) {
+private fun InsightCard(
+    state: AppUiState,
+    ai: AiReview,
+    onEdit: (Long) -> Unit,
+    onRequest: (Boolean) -> Unit
+) {
     Card(
         Modifier.fillMaxWidth(),
-        shape = RoundedCornerShape(14.dp),
+        shape = RoundedCornerShape(18.dp),
         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primaryContainer)
     ) {
-        Column(Modifier.padding(start = 14.dp, end = 14.dp, top = 12.dp, bottom = 6.dp)) {
+        Column(Modifier.padding(start = 16.dp, end = 16.dp, top = 14.dp, bottom = 12.dp)) {
             Text(
                 "体检结论 · ${state.reviewWindow.noun}",
                 style = MaterialTheme.typography.labelMedium,
@@ -454,6 +406,100 @@ private fun InsightCard(state: AppUiState, onEdit: (Long) -> Unit) {
                     onEdit = { onEdit(stepRuleId) }
                 )
             }
+
+            // AI：合并进结论卡，不再单独占一张卡
+            Spacer(Modifier.height(8.dp))
+            Box(
+                Modifier
+                    .fillMaxWidth()
+                    .height(1.dp)
+                    .background(MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.12f))
+            )
+            Spacer(Modifier.height(4.dp))
+            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                Icon(
+                    Icons.Filled.AutoAwesome,
+                    contentDescription = null,
+                    tint = MaterialTheme.colorScheme.primary,
+                    modifier = Modifier.size(16.dp)
+                )
+                Spacer(Modifier.width(8.dp))
+                when (ai) {
+                    AiReview.Idle -> {
+                        Text(
+                            "让 AI 补一句（参考）",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onPrimaryContainer,
+                            modifier = Modifier.weight(1f)
+                        )
+                        TextButton(
+                            onClick = { onRequest(false) },
+                            enabled = state.activeRules.isNotEmpty()
+                        ) { Text("生成") }
+                    }
+                    AiReview.Loading -> {
+                        CircularProgressIndicator(Modifier.size(14.dp), strokeWidth = 2.dp)
+                        Spacer(Modifier.width(8.dp))
+                        Text(
+                            "AI 在读你的 ${state.totalDone} 次打卡",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onPrimaryContainer
+                        )
+                    }
+                    is AiReview.Failed -> {
+                        Text(
+                            ai.message,
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.error,
+                            maxLines = 2,
+                            modifier = Modifier.weight(1f)
+                        )
+                        TextButton(onClick = { onRequest(true) }) { Text("重试") }
+                    }
+                    is AiReview.Ready -> {
+                        Text(
+                            "AI 复盘（参考）",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onPrimaryContainer,
+                            modifier = Modifier.weight(1f)
+                        )
+                        TextButton(onClick = { onRequest(true) }) { Text("重算") }
+                    }
+                }
+            }
+            if (ai is AiReview.Ready) {
+                Text(
+                    ai.insight.summary,
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onPrimaryContainer
+                )
+                ai.insight.suggestions.forEach { s ->
+                    val ruleId = ai.ruleIds.getOrNull(s.rule - 1)
+                    Row(
+                        Modifier
+                            .fillMaxWidth()
+                            .clip(RoundedCornerShape(8.dp))
+                            .then(if (ruleId != null) Modifier.clickable { onEdit(ruleId) } else Modifier)
+                            .padding(vertical = 6.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text("▸", style = MaterialTheme.typography.labelMedium,
+                            color = MaterialTheme.colorScheme.primary)
+                        Spacer(Modifier.width(6.dp))
+                        Text(
+                            s.text,
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onPrimaryContainer,
+                            modifier = Modifier.weight(1f)
+                        )
+                        if (ruleId != null) Text(
+                            "去改",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.primary
+                        )
+                    }
+                }
+            }
         }
     }
 }
@@ -480,112 +526,6 @@ private fun InsightRow(text: String, onEdit: () -> Unit) {
             fontWeight = FontWeight.SemiBold,
             color = MaterialTheme.colorScheme.primary
         )
-    }
-}
-
-@Composable
-private fun AiReviewCard(
-    ai: AiReview,
-    state: AppUiState,
-    onEdit: (Long) -> Unit,
-    onRequest: (Boolean) -> Unit
-) {
-    Card(
-        Modifier.fillMaxWidth(),
-        shape = RoundedCornerShape(14.dp),
-        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primaryContainer)
-    ) {
-        Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Text(
-                    "AI 复盘",
-                    style = MaterialTheme.typography.labelMedium,
-                    fontWeight = FontWeight.SemiBold,
-                    color = MaterialTheme.colorScheme.onPrimaryContainer
-                )
-                Spacer(Modifier.width(6.dp))
-                Text(
-                    "参考",
-                    style = MaterialTheme.typography.labelSmall,
-                    color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.6f),
-                    modifier = Modifier
-                        .border(1.dp, MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.25f),
-                            RoundedCornerShape(5.dp))
-                        .padding(horizontal = 5.dp, vertical = 1.dp)
-                )
-                Spacer(Modifier.weight(1f))
-                if (ai is AiReview.Ready) {
-                    TextButton(onClick = { onRequest(true) }) { Text("重算") }
-                }
-            }
-            when (ai) {
-                AiReview.Idle -> {
-                    Text(
-                        "会把窗口内的打卡流水（含具体时间）发给接口。",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.75f)
-                    )
-                    OutlinedButton(
-                        onClick = { onRequest(false) },
-                        enabled = state.activeRules.isNotEmpty()
-                    ) { Text("让 AI 补一句") }
-                }
-                AiReview.Loading -> Row(
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(8.dp)
-                ) {
-                    CircularProgressIndicator(Modifier.size(14.dp), strokeWidth = 2.dp)
-                    Text(
-                        "在读你的 ${state.totalDone} 次打卡",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onPrimaryContainer
-                    )
-                }
-                is AiReview.Failed -> Row(verticalAlignment = Alignment.CenterVertically) {
-                    Text(
-                        ai.message,
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.error,
-                        maxLines = 2,
-                        modifier = Modifier.weight(1f)
-                    )
-                    TextButton(onClick = { onRequest(true) }) { Text("重试") }
-                }
-                is AiReview.Ready -> {
-                    Text(
-                        ai.insight.summary,
-                        style = MaterialTheme.typography.bodyMedium,
-                        color = MaterialTheme.colorScheme.onPrimaryContainer
-                    )
-                    ai.insight.suggestions.forEach { s ->
-                        val ruleId = ai.ruleIds.getOrNull(s.rule - 1)
-                        Row(
-                            Modifier
-                                .fillMaxWidth()
-                                .clip(RoundedCornerShape(8.dp))
-                                .then(if (ruleId != null) Modifier.clickable { onEdit(ruleId) } else Modifier)
-                                .padding(vertical = 6.dp),
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            Text("▸", style = MaterialTheme.typography.labelMedium,
-                                color = MaterialTheme.colorScheme.primary)
-                            Spacer(Modifier.width(6.dp))
-                            Text(
-                                s.text,
-                                style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.onPrimaryContainer,
-                                modifier = Modifier.weight(1f)
-                            )
-                            if (ruleId != null) Text(
-                                "去改",
-                                style = MaterialTheme.typography.labelSmall,
-                                color = MaterialTheme.colorScheme.primary
-                            )
-                        }
-                    }
-                }
-            }
-        }
     }
 }
 
@@ -646,7 +586,7 @@ private fun LogGroupCard(
     )
     Card(
         Modifier.fillMaxWidth(),
-        shape = RoundedCornerShape(14.dp),
+        shape = RoundedCornerShape(18.dp),
         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primaryContainer)
     ) {
         Column {
@@ -763,6 +703,7 @@ private fun CollapsibleHeader(
     title: String,
     expanded: Boolean,
     summary: String? = null,
+    icon: ImageVector? = null,
     action: (@Composable () -> Unit)? = null,
     onToggle: () -> Unit,
     onLongPress: () -> Unit
@@ -775,10 +716,15 @@ private fun CollapsibleHeader(
             .padding(horizontal = 4.dp, vertical = 8.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
+        if (icon != null) {
+            Icon(icon, contentDescription = null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(18.dp))
+            Spacer(Modifier.width(8.dp))
+        }
         Text(
             title,
             style = MaterialTheme.typography.titleSmall,
-            color = MaterialTheme.colorScheme.onSurfaceVariant
+            fontWeight = FontWeight.SemiBold,
+            color = MaterialTheme.colorScheme.onSurface
         )
         Spacer(Modifier.width(8.dp))
         if (!expanded && !summary.isNullOrBlank()) {
@@ -810,7 +756,7 @@ private fun TrendCard(
 ) {
     Card(
         Modifier.fillMaxWidth(),
-        shape = RoundedCornerShape(14.dp)
+        shape = RoundedCornerShape(18.dp)
     ) {
         Column(Modifier.padding(12.dp)) {
             Heatmap(state.heat, selected, onCell)
@@ -1099,9 +1045,9 @@ private fun StatRow(
     Card(
         modifier = Modifier
             .fillMaxWidth()
-            .clip(RoundedCornerShape(14.dp))
+            .clip(RoundedCornerShape(18.dp))
             .clickable { onClick() },
-        shape = RoundedCornerShape(14.dp)
+        shape = RoundedCornerShape(18.dp)
     ) {
         Row(Modifier.padding(14.dp), verticalAlignment = Alignment.CenterVertically) {
             Column(Modifier.weight(1f)) {
