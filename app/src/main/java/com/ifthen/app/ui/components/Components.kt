@@ -69,6 +69,7 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.lerp
+import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalDensity
@@ -155,6 +156,7 @@ fun TitleBar(
 @Composable
 fun SectionHeader(
     title: String,
+    icon: ImageVector? = null,
     action: (@Composable () -> Unit)? = null,
     modifier: Modifier = Modifier
 ) {
@@ -162,10 +164,15 @@ fun SectionHeader(
         modifier = modifier.fillMaxWidth().padding(horizontal = 4.dp, vertical = 6.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
+        if (icon != null) {
+            Icon(icon, contentDescription = null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(18.dp))
+            Spacer(Modifier.width(8.dp))
+        }
         Text(
             text = title,
             style = MaterialTheme.typography.titleSmall,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            fontWeight = FontWeight.SemiBold,
+            color = MaterialTheme.colorScheme.onSurface,
             modifier = Modifier.weight(1f)
         )
         action?.invoke()
@@ -472,7 +479,7 @@ fun SwipeRuleCard(
                 .offset { IntOffset(offsetX.value.roundToInt(), 0) }
                 .then(if (cardScale == 1f) Modifier else Modifier.scale(cardScale))
                 .then(dragModifier),
-            shape = RoundedCornerShape(14.dp),
+            shape = RoundedCornerShape(18.dp),
             colors = CardDefaults.cardColors(containerColor = cardColor)
         ) {
             Row(
@@ -646,7 +653,7 @@ fun FolderRow(
     )
     Card(
         modifier = modifier.fillMaxWidth().scale(scale),
-        shape = RoundedCornerShape(14.dp),
+        shape = RoundedCornerShape(18.dp),
         colors = CardDefaults.cardColors(
             containerColor = if (hovered) accent.copy(alpha = 0.34f) else accent.copy(alpha = 0.10f)
         ),
@@ -977,7 +984,7 @@ fun NextStepBar(
 ) {
     Card(
         modifier = modifier.fillMaxWidth(),
-        shape = RoundedCornerShape(14.dp),
+        shape = RoundedCornerShape(18.dp),
         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primaryContainer)
     ) {
         Row(
@@ -1016,7 +1023,7 @@ fun NextStepBar(
 fun ChainCompleteBar(size: Int, modifier: Modifier = Modifier) {
     Card(
         modifier = modifier.fillMaxWidth(),
-        shape = RoundedCornerShape(14.dp),
+        shape = RoundedCornerShape(18.dp),
         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primary)
     ) {
         Row(Modifier.padding(horizontal = 14.dp, vertical = 12.dp), verticalAlignment = Alignment.CenterVertically) {

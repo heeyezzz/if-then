@@ -23,6 +23,9 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.SwapVert
+import androidx.compose.material.icons.filled.Bolt
+import androidx.compose.material.icons.filled.Checklist
+import androidx.compose.material.icons.filled.Folder
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -268,7 +271,7 @@ fun HomeScreen(
 
             val frequentRules = state.frequentRuleIds.mapNotNull { state.ruleById[it] }
             if (!sorting && !inFolder && frequentRules.isNotEmpty()) {
-                item { SectionHeader("今天的现场") }
+                item { SectionHeader("今天的现场", icon = Icons.Filled.Bolt) }
                 item {
                     LazyRow(
                         horizontalArrangement = Arrangement.spacedBy(8.dp),
@@ -292,7 +295,7 @@ fun HomeScreen(
             }
 
             if (state.visibleFolders.isNotEmpty()) {
-                item { SectionHeader(title = if (inFolder) "子文件夹" else "文件夹") }
+                item { SectionHeader(title = if (inFolder) "子文件夹" else "文件夹", icon = Icons.Filled.Folder) }
                 val folders = state.visibleFolders
                 folders.forEachIndexed { i, folder ->
                     item(key = "d" + folder.id) {
@@ -399,7 +402,7 @@ fun HomeScreen(
             }
 
             if (groups.isNotEmpty()) {
-                item { SectionHeader(if (sorting) "预案（长按箭头可连续移动）" else "预案") }
+                item { SectionHeader(if (sorting) "预案（长按箭头可连续移动）" else "预案", icon = Icons.Filled.Checklist) }
                 groups.forEachIndexed { gi, group ->
                     val first = group.rules.first()
                     if (group.rules.size == 1 && group.offFolderTails.isEmpty()) {
@@ -698,7 +701,7 @@ private fun ChainRow(
     val card: @Composable () -> Unit = {
         Card(
             Modifier.fillMaxWidth(),
-            shape = RoundedCornerShape(14.dp),
+            shape = RoundedCornerShape(18.dp),
             colors = CardDefaults.cardColors(containerColor = container)
         ) {
             Column {
