@@ -53,6 +53,7 @@ import com.ifthen.app.data.Folder
 import com.ifthen.app.data.Rule
 import com.ifthen.app.ui.AppUiState
 import com.ifthen.app.ui.AppViewModel
+import com.ifthen.app.ui.components.TitleBar
 import com.ifthen.app.ui.ChainPos
 
 /**
@@ -136,11 +137,8 @@ fun ChainEditScreen(
             verticalArrangement = Arrangement.spacedBy(8.dp)
         ) {
             item {
-                Column(Modifier.padding(top = 8.dp)) {
-                    Text(
-                        if (headId > 0L) "整串编辑" else "新建一串",
-                        style = MaterialTheme.typography.headlineSmall
-                    )
+                Column {
+                    TitleBar(title = if (headId > 0L) "整串编辑" else "新建一串")
                     Text(
                         "一行一步，做完上一步就接下一步。整串进同一个文件夹。",
                         style = MaterialTheme.typography.bodySmall,

@@ -10,6 +10,21 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.ColumnScope
+import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.material3.Icon
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
+import androidx.compose.material.icons.filled.AutoAwesome
+import androidx.compose.material.icons.filled.Edit
+import androidx.compose.material.icons.filled.Event
+import androidx.compose.material.icons.filled.Folder
+import androidx.compose.material.icons.filled.Link
+import androidx.compose.material.icons.filled.Tune
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.AlertDialog
@@ -49,6 +64,7 @@ import com.ifthen.app.data.RuleKind
 import com.ifthen.app.data.RuleStatus
 import com.ifthen.app.data.isResolved
 import com.ifthen.app.ui.AppViewModel
+import com.ifthen.app.ui.components.TitleBar
 import java.text.SimpleDateFormat
 import java.util.Calendar
 import java.util.Date
@@ -125,154 +141,132 @@ fun RuleEditScreen(
     val archived = current?.status == RuleStatus.ARCHIVED.name
 
     fun switchKind(toOneOff: Boolean) {
-        if (ruleId > 0) vm.convertKind(ruleId, toOneOff) { onToast(it) }
+        // 只切本地状态；真正落库在点「保存」时（避免切一下就把规则改了）
         kind = if (toOneOff) RuleKind.ONE_OFF.name else RuleKind.REPEATING.name
     }
 
     Surface(modifier = modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
         Column(
             modifier = Modifier.fillMaxSize().verticalScroll(rememberScrollState())
-                .padding(horizontal = 16.dp, vertical = 16.dp),
-            verticalArrangement = Arrangement.spacedBy(14.dp)
+                .padding(horizontal = 16.dp),
+            verticalArrangement = Arrangement.spacedBy(18.dp)
         ) {
-            Text(
-                if (ruleId > 0) "编辑预案" else "新建预案",
-                style = MaterialTheme.typography.headlineSmall
-            )
+            TitleBar(title = if (ruleId > 0) "编辑预案" else "新建预案")
             val oneOff = kind == RuleKind.ONE_OFF.name
-            SingleChoiceSegmentedButtonRow(Modifier.fillMaxWidth()) {
-                SegmentedButton(
-                    selected = !oneOff,
-                    onClick = { if (oneOff) switchKind(false) },
-                    shape = SegmentedButtonDefaults.itemShape(index = 0, count = 2)
-                ) { Text("长期") }
-                SegmentedButton(
-                    selected = oneOff,
-                    onClick = { if (!oneOff) switchKind(true) },
-                    shape = SegmentedButtonDefaults.itemShape(index = 1, count = 2)
-                ) { Text("一次性") }
-            }
-            Text(
-                if (oneOff) "情境只来一次：做完或没做都当场结清，然后从清单消失"
-                else "反复照案执行：留在清单里，触发一次打卡一次",
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant
-            )
-            OutlinedTextField(
-                value = ifText,
-                onValueChange = { ifText = it },
-                label = { Text("如果…（触发情境：时间/地点/情绪/动作）") },
-                modifier = Modifier.fillMaxWidth(),
-                minLines = 2
-            )
-            OutlinedTextField(
-                value = thenText,
-                onValueChange = { thenText = it },
-                label = { Text("那就…（立刻可做的一件小事）") },
-                modifier = Modifier.fillMaxWidth(),
-                minLines = 2
-            )
-            OutlinedTextField(
-                value = miniThen,
-                onValueChange = { miniThen = it },
-                label = { Text("两分钟版（可选）") },
-                supportingText = {
-                    Text("状态差时只做这一句也算「做了」：先保住动作本身，再谈剂量")
-                },
-                modifier = Modifier.fillMaxWidth(),
-                singleLine = true
-            )
-            if (!oneOff) {
-                Card(
-                    colors = CardDefaults.cardColors(
-                        containerColor = MaterialTheme.colorScheme.surfaceVariant
-                    ),
-                    modifier = Modifier.fillMaxWidth()
-                ) {
-                    Row(
-                        Modifier.clickable { showFolderPicker = true }
-                            .padding(horizontal = 16.dp, vertical = 14.dp),
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Column(Modifier.weight(1f)) {
-                            Text("所在文件夹", style = MaterialTheme.typography.labelLarge)
-                            val f = state.folders.firstOrNull { it.id == folderId }
-                            Text(
-                                if (f == null) "根目录" else "${f.emoji}${f.name}",
-                                style = MaterialTheme.typography.bodyMedium,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant
-                            )
-                        }
-                        Text("更换 ›", style = MaterialTheme.typography.labelMedium,
-                            color = MaterialTheme.colorScheme.primary)
+
+            // 类型
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                EditSectionHeader("类型", Icons.Filled.Tune)
+                EditCard {
+                    SingleChoiceSegmentedButtonRow(Modifier.fillMaxWidth()) {
+                        SegmentedButton(
+                            selected = !oneOff,
+                            onClick = { if (oneOff) switchKind(false) },
+                            shape = SegmentedButtonDefaults.itemShape(index = 0, count = 2)
+                        ) { Text("长期") }
+                        SegmentedButton(
+                            selected = oneOff,
+                            onClick = { if (!oneOff) switchKind(true) },
+                            shape = SegmentedButtonDefaults.itemShape(index = 1, count = 2)
+                        ) { Text("一次性") }
                     }
-                }
-            }
-            if (oneOff) {
-                Card(
-                    colors = CardDefaults.cardColors(
-                        containerColor = MaterialTheme.colorScheme.surfaceVariant
-                    ),
-                    modifier = Modifier.fillMaxWidth()
-                ) {
-                    Row(
-                        Modifier.clickable { showDuePicker = true }
-                            .padding(horizontal = 16.dp, vertical = 14.dp),
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Column(Modifier.weight(1f)) {
-                            Text("哪天之前", style = MaterialTheme.typography.labelLarge)
-                            Text(
-                                dueDate?.let { "${editDueFmt.format(java.util.Date(it))} 前" }
-                                    ?: "不限 · 情境出现就做",
-                                style = MaterialTheme.typography.bodyMedium,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant
-                            )
-                        }
-                        Text(
-                            if (dueDate == null) "设定 ›" else "更换 ›",
-                            style = MaterialTheme.typography.labelMedium,
-                            color = MaterialTheme.colorScheme.primary
-                        )
-                    }
-                }
-            }
-            if (ruleId > 0 && loaded && !oneOff) {
-                Card(
-                    colors = CardDefaults.cardColors(
-                        containerColor = MaterialTheme.colorScheme.surfaceVariant
-                    ),
-                    modifier = Modifier.fillMaxWidth()
-                ) {
-                    Row(
-                        Modifier.clickable { showNextPicker = true }
-                            .padding(horizontal = 16.dp, vertical = 14.dp),
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Column(Modifier.weight(1f)) {
-                            Text("下一步接哪个预案", style = MaterialTheme.typography.labelLarge)
-                            val nx = nextId?.let { id -> state.ruleById[id] }
-                            Text(
-                                if (nx == null) "没有 · 做完这条就结束" else "→ ${nx.ifText}",
-                                style = MaterialTheme.typography.bodyMedium,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant
-                            )
-                        }
-                        Text(
-                            if (nextId == null) "接上 ›" else "更换 ›",
-                            style = MaterialTheme.typography.labelMedium,
-                            color = MaterialTheme.colorScheme.primary
-                        )
-                    }
-                }
-                state.chain.chainPos[ruleId]?.let { pos ->
                     Text(
-                        "这条排在链条第 ${pos.step}/${pos.size} 步（首页点卡片上的序号可以从这里断开）",
+                        if (oneOff) "情境只来一次：做完或没做都当场结清，然后从清单消失"
+                        else "反复照案执行：留在清单里，触发一次打卡一次",
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
                 }
             }
+
+            // 内容
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                EditSectionHeader("预案内容", Icons.Filled.Edit)
+                EditCard {
+                    OutlinedTextField(
+                        value = ifText,
+                        onValueChange = { ifText = it },
+                        label = { Text("如果…") },
+                        placeholder = { Text("触发情境：时间 / 地点 / 情绪 / 动作") },
+                        modifier = Modifier.fillMaxWidth(),
+                        minLines = 2,
+                        shape = RoundedCornerShape(12.dp)
+                    )
+                    OutlinedTextField(
+                        value = thenText,
+                        onValueChange = { thenText = it },
+                        label = { Text("那就…") },
+                        placeholder = { Text("立刻可做的一件小事") },
+                        modifier = Modifier.fillMaxWidth(),
+                        minLines = 2,
+                        shape = RoundedCornerShape(12.dp)
+                    )
+                    OutlinedTextField(
+                        value = miniThen,
+                        onValueChange = { miniThen = it },
+                        label = { Text("两分钟版（可选）") },
+                        supportingText = { Text("状态差时只做这一句也算「做了」：先保住动作本身") },
+                        modifier = Modifier.fillMaxWidth(),
+                        singleLine = true,
+                        shape = RoundedCornerShape(12.dp)
+                    )
+                }
+            }
+
+            // 归属与连接
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                EditSectionHeader("归属与连接", Icons.Filled.Folder)
+                Surface(
+                    shape = RoundedCornerShape(20.dp),
+                    color = MaterialTheme.colorScheme.surfaceVariant,
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Column(Modifier.padding(horizontal = 12.dp, vertical = 6.dp)) {
+                        if (!oneOff) {
+                            PickRow(
+                                icon = Icons.Filled.Folder,
+                                title = "所在文件夹",
+                                value = state.folders.firstOrNull { it.id == folderId }
+                                    ?.let { "${it.emoji}${it.name}" } ?: "根目录",
+                                action = "更换",
+                                onClick = { showFolderPicker = true }
+                            )
+                        }
+                        if (oneOff) {
+                            PickRow(
+                                icon = Icons.Filled.Event,
+                                title = "哪天之前",
+                                value = dueDate?.let { "${editDueFmt.format(java.util.Date(it))} 前" }
+                                    ?: "不限 · 情境出现就做",
+                                action = if (dueDate == null) "设定" else "更换",
+                                onClick = { showDuePicker = true }
+                            )
+                        }
+                        if (ruleId > 0 && loaded && !oneOff) {
+                            PickRow(
+                                icon = Icons.Filled.Link,
+                                title = "下一步接哪个预案",
+                                value = nextId?.let { id -> state.ruleById[id] }
+                                    ?.let { "→ ${it.ifText}" } ?: "没有 · 做完这条就结束",
+                                action = if (nextId == null) "接上" else "更换",
+                                onClick = { showNextPicker = true }
+                            )
+                        }
+                    }
+                }
+                if (ruleId > 0 && !oneOff) {
+                    state.chain.chainPos[ruleId]?.let { pos ->
+                        Text(
+                            "这条排在链条第 ${pos.step}/${pos.size} 步（首页点卡片上的序号可以从这里断开）",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier.padding(start = 4.dp)
+                        )
+                    }
+                }
+            }
+
+            // 保存（唯一主操作）
             Button(
                 onClick = {
                     if (ifText.isBlank() || thenText.isBlank()) {
@@ -280,8 +274,9 @@ fun RuleEditScreen(
                         return@Button
                     }
                     val base = current
-                    vm.saveRule(
-                        (base ?: Rule(ifText = "", thenText = "")).copy(
+                    vm.saveRuleEdited(
+                        original = current,
+                        updated = (base ?: Rule(ifText = "", thenText = "")).copy(
                             ifText = ifText.trim(),
                             thenText = thenText.trim(),
                             miniThen = miniThen.trim(),
@@ -295,6 +290,7 @@ fun RuleEditScreen(
                 modifier = Modifier.fillMaxWidth()
             ) { Text("保存") }
 
+            // 归档 / 删除
             if (ruleId > 0 && loaded) {
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     OutlinedButton(
@@ -309,7 +305,7 @@ fun RuleEditScreen(
                     OutlinedButton(
                         onClick = { showDelete = true },
                         modifier = Modifier.weight(1f)
-                    ) { Text("彻底删除") }
+                    ) { Text("彻底删除", color = MaterialTheme.colorScheme.error) }
                 }
             }
             if (current?.isResolved == true) {
@@ -319,15 +315,10 @@ fun RuleEditScreen(
                 ) { Text("重新挂起为待结清") }
             }
 
-            Spacer(Modifier.height(8.dp))
-            Card(
-                colors = CardDefaults.cardColors(
-                    containerColor = MaterialTheme.colorScheme.surfaceVariant
-                ),
-                modifier = Modifier.fillMaxWidth()
-            ) {
-                Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                    Text("让 AI 帮你想", style = MaterialTheme.typography.titleMedium)
+            // AI 辅助
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                EditSectionHeader("AI 辅助", Icons.Filled.AutoAwesome)
+                EditCard {
                     Text(
                         "描述一个困扰，AI 只出候选，勾选确认后才入库",
                         style = MaterialTheme.typography.bodySmall,
@@ -338,7 +329,8 @@ fun RuleEditScreen(
                         onValueChange = { concern = it },
                         label = { Text("例如：一到下午就犯困想刷手机") },
                         modifier = Modifier.fillMaxWidth(),
-                        minLines = 2
+                        minLines = 2,
+                        shape = RoundedCornerShape(12.dp)
                     )
                     if (settings.apiKey.isBlank()) {
                         Text(
@@ -537,6 +529,56 @@ fun RuleEditScreen(
             dismissButton = {
                 TextButton(onClick = { showDelete = false }) { Text("取消") }
             }
+        )
+    }
+}
+
+@Composable
+private fun EditSectionHeader(title: String, icon: ImageVector) {
+    Row(Modifier.padding(start = 4.dp), verticalAlignment = Alignment.CenterVertically) {
+        Icon(icon, contentDescription = null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(18.dp))
+        Spacer(Modifier.width(8.dp))
+        Text(title, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
+    }
+}
+
+@Composable
+private fun EditCard(content: @Composable ColumnScope.() -> Unit) {
+    Surface(
+        shape = RoundedCornerShape(20.dp),
+        color = MaterialTheme.colorScheme.surfaceVariant,
+        modifier = Modifier.fillMaxWidth()
+    ) {
+        Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp), content = content)
+    }
+}
+
+@Composable
+private fun PickRow(
+    icon: ImageVector,
+    title: String,
+    value: String,
+    action: String,
+    onClick: () -> Unit
+) {
+    Row(
+        Modifier.fillMaxWidth().clip(RoundedCornerShape(12.dp)).clickable(onClick = onClick)
+            .padding(horizontal = 4.dp, vertical = 10.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Icon(icon, contentDescription = null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(22.dp))
+        Spacer(Modifier.width(14.dp))
+        Column(Modifier.weight(1f)) {
+            Text(title, style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.Medium)
+            Text(value, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        }
+        Spacer(Modifier.width(8.dp))
+        Text(action, style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.primary)
+        Icon(
+            Icons.AutoMirrored.Filled.KeyboardArrowRight,
+            contentDescription = null,
+            tint = MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier.size(18.dp)
         )
     }
 }

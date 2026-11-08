@@ -16,14 +16,12 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.SwapVert
-import androidx.compose.material.icons.filled.Bolt
 import androidx.compose.material.icons.filled.Checklist
 import androidx.compose.material.icons.filled.Folder
 import androidx.compose.material3.AlertDialog
@@ -71,7 +69,6 @@ import com.ifthen.app.ui.components.ChainViewPanel
 import com.ifthen.app.ui.components.FolderEditorDialog
 import com.ifthen.app.ui.components.FolderRow
 import com.ifthen.app.ui.components.NextStepBar
-import com.ifthen.app.ui.components.RuleChip
 import com.ifthen.app.ui.components.SectionHeader
 import com.ifthen.app.ui.components.SortPad
 import com.ifthen.app.ui.components.SwipeRuleCard
@@ -270,29 +267,6 @@ fun HomeScreen(
             }
 
             val frequentRules = state.frequentRuleIds.mapNotNull { state.ruleById[it] }
-            if (!sorting && !inFolder && frequentRules.isNotEmpty()) {
-                item { SectionHeader("今天的现场", icon = Icons.Filled.Bolt) }
-                item {
-                    LazyRow(
-                        horizontalArrangement = Arrangement.spacedBy(8.dp),
-                        contentPadding = PaddingValues(vertical = 2.dp)
-                    ) {
-                        items(frequentRules, key = { "f" + it.id }) { rule ->
-                            RuleChip(
-                                rule = rule,
-                                streak = state.stats[rule.id]?.streak ?: 0,
-                                today = state.todayStatusByRule[rule.id],
-                                onClick = {
-                                    SuccessChime.play()
-                                    vm.logDone(rule.id)
-                                    onRecord(rule.thenText + " ✓")
-                                },
-                                onLongClick = { onEdit(rule.id) }
-                            )
-                        }
-                    }
-                }
-            }
 
             if (state.visibleFolders.isNotEmpty()) {
                 item { SectionHeader(title = if (inFolder) "子文件夹" else "文件夹", icon = Icons.Filled.Folder) }

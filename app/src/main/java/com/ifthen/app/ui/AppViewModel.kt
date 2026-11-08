@@ -486,6 +486,27 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             kotlinx.coroutines.withContext(Dispatchers.Main) { onResult(msg) }
         }
 
+    /** 编辑页保存：只有类型变了才按原语义转换（转一次性会摘出链条并清链位、转长期清到期），其余字段照常入库 */
+    fun saveRuleEdited(original: Rule?, updated: Rule, onSaved: (Long) -> Unit = {}) =
+        viewModelScope.launch(Dispatchers.IO) {
+            var toSave = updated
+            val kindChanged = original != null && original.kind != updated.kind
+            if (kindChanged) {
+                if (updated.kind == RuleKind.ONE_OFF.name) {
+                    spliceOut(original!!.id)
+                    toSave = toSave.copy(chainId = null, stepIndex = null, status = RuleStatus.ACTIVE.name)
+                } else {
+                    toSave = toSave.copy(dueDate = null, status = RuleStatus.ACTIVE.name)
+                }
+            }
+            val finalRule = if (toSave.id == 0L)
+                toSave.copy(sortOrder = db.ruleDao().maxSortOrder(toSave.folderId) + 1) else toSave
+            val id = db.ruleDao().upsert(finalRule)
+            kotlinx.coroutines.withContext(Dispatchers.Main) {
+                onSaved(if (toSave.id != 0L) toSave.id else id)
+            }
+        }
+
     private suspend fun chainCompletedHead(ruleId: Long): Long? {
         val active = db.ruleDao().observeAll().first().filter { it.status == RuleStatus.ACTIVE.name }
         val path = ChainGraph.paths(active).firstOrNull { p -> p.any { it.id == ruleId } } ?: return null

@@ -74,6 +74,7 @@ import com.ifthen.app.ui.TodayStatus
 import com.ifthen.app.ui.components.ActionMiss
 import com.ifthen.app.ui.components.Heatmap
 import com.ifthen.app.ui.components.SectionHeader
+import com.ifthen.app.ui.components.TitleBar
 import com.ifthen.app.ui.components.SemanticTag
 import com.ifthen.app.ui.components.StreakChip
 import java.text.SimpleDateFormat
@@ -137,17 +138,10 @@ fun ReviewScreen(
             verticalArrangement = Arrangement.spacedBy(12.dp)
         ) {
             item(key = "title") {
-                Row(
-                    Modifier.fillMaxWidth().padding(top = 8.dp),
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Text(
-                        "复盘",
-                        style = MaterialTheme.typography.headlineMedium,
-                        modifier = Modifier.weight(1f)
-                    )
-                    WindowPicker(state.reviewWindow) { vm.setReviewWindow(it) }
-                }
+                TitleBar(
+                    title = "复盘",
+                    action = { WindowPicker(state.reviewWindow) { vm.setReviewWindow(it) } }
+                )
             }
 
             item(key = "conclusion") {

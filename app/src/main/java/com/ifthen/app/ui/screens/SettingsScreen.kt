@@ -60,6 +60,7 @@ import androidx.compose.ui.unit.dp
 import com.ifthen.app.BuildConfig
 import com.ifthen.app.R
 import com.ifthen.app.ui.AppViewModel
+import com.ifthen.app.ui.components.TitleBar
 import com.ifthen.app.update.UpdateInfo
 
 @Composable
@@ -112,10 +113,10 @@ fun SettingsScreen(
     Surface(modifier = modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
         Column(
             Modifier.fillMaxSize().verticalScroll(rememberScrollState())
-                .padding(horizontal = 16.dp, vertical = 16.dp),
+                .padding(horizontal = 16.dp),
             verticalArrangement = Arrangement.spacedBy(20.dp)
         ) {
-            Text("设置", style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.SemiBold)
+            TitleBar(title = "设置")
 
             // ── AI 助手 ──
             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
