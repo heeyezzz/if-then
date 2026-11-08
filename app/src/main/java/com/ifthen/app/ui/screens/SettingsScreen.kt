@@ -1,19 +1,40 @@
 package com.ifthen.app.ui.screens
 
+import android.content.Intent
+import android.net.Uri
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.Image
+import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ColumnScope
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Backup
+import androidx.compose.material.icons.filled.CloudDownload
+import androidx.compose.material.icons.filled.CloudUpload
+import androidx.compose.material.icons.filled.Info
+import androidx.compose.material.icons.filled.SmartToy
+import androidx.compose.material.icons.filled.SystemUpdate
+import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
+import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
@@ -28,16 +49,16 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
-import androidx.compose.ui.Modifier
-import androidx.compose.ui.unit.dp
-import android.content.Intent
-import android.net.Uri
-import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.heightIn
-import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.unit.dp
 import com.ifthen.app.BuildConfig
+import com.ifthen.app.R
 import com.ifthen.app.ui.AppViewModel
 import com.ifthen.app.update.UpdateInfo
 
@@ -92,122 +113,167 @@ fun SettingsScreen(
         Column(
             Modifier.fillMaxSize().verticalScroll(rememberScrollState())
                 .padding(horizontal = 16.dp, vertical = 16.dp),
-            verticalArrangement = Arrangement.spacedBy(14.dp)
+            verticalArrangement = Arrangement.spacedBy(20.dp)
         ) {
-            Text("设置", style = MaterialTheme.typography.headlineMedium)
+            Text("设置", style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.SemiBold)
 
-            Text("AI 接口（BYOK，OpenAI 兼容协议）", style = MaterialTheme.typography.titleMedium)
-            OutlinedTextField(
-                value = baseUrl, onValueChange = { baseUrl = it },
-                label = { Text("Base URL") },
-                supportingText = { Text("如 https://api.deepseek.com/v1") },
-                modifier = Modifier.fillMaxWidth(), singleLine = true
-            )
-            OutlinedTextField(
-                value = apiKey, onValueChange = { apiKey = it },
-                label = { Text("API Key") },
-                modifier = Modifier.fillMaxWidth(), singleLine = true
-            )
-            OutlinedTextField(
-                value = model, onValueChange = { model = it },
-                label = { Text("模型名") },
-                supportingText = { Text("如 deepseek-flash") },
-                modifier = Modifier.fillMaxWidth(), singleLine = true
-            )
-            Button(
-                onClick = {
-                    vm.saveApiSettings(
-                        com.ifthen.app.data.ApiSettings(baseUrl.trim(), apiKey.trim(), model.trim())
+            // ── AI 助手 ──
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                SectionHeader("AI 助手", Icons.Filled.SmartToy)
+                SectionCard {
+                    Text(
+                        "BYOK · OpenAI 兼容协议",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
-                    onToast("已保存")
-                },
-                modifier = Modifier.fillMaxWidth()
-            ) { Text("保存接口配置") }
-            OutlinedButton(
-                enabled = !testing,
-                onClick = {
-                    testing = true
-                    vm.testApi(
-                        com.ifthen.app.data.ApiSettings(baseUrl.trim(), apiKey.trim(), model.trim())
-                    ) { r ->
-                        testing = false
-                        r.onSuccess { onToast("连接成功，可见 $it 个模型") }
-                            .onFailure { onToast("连接失败：${it.message}") }
-                    }
-                },
-                modifier = Modifier.fillMaxWidth()
-            ) {
-                if (testing) {
-                    androidx.compose.material3.CircularProgressIndicator(
-                        modifier = Modifier.size(18.dp), strokeWidth = 2.dp
+                    OutlinedTextField(
+                        value = baseUrl, onValueChange = { baseUrl = it },
+                        label = { Text("Base URL") },
+                        modifier = Modifier.fillMaxWidth(), singleLine = true,
+                        shape = RoundedCornerShape(12.dp)
                     )
-                    Text("  测试连接中…")
-                } else {
-                    Text("测试连接")
-                }
-            }
-
-            Spacer(Modifier.height(12.dp))
-            Text("数据", style = MaterialTheme.typography.titleMedium)
-            Text(
-                "导出不包含 API Key。导入会覆盖当前全部数据。",
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant
-            )
-            OutlinedButton(
-                onClick = { exportLauncher.launch("ifthen-backup.json") },
-                modifier = Modifier.fillMaxWidth()
-            ) { Text("导出 JSON 备份") }
-            Button(
-                onClick = { importLauncher.launch(arrayOf("application/json", "text/plain", "*/*")) },
-                modifier = Modifier.fillMaxWidth()
-            ) { Text("从 JSON 恢复") }
-
-            Spacer(Modifier.height(12.dp))
-            Text("关于", style = MaterialTheme.typography.titleMedium)
-            Row(
-                Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Text("当前版本")
-                Text(
-                    "v${BuildConfig.VERSION_NAME}",
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
-            }
-            OutlinedButton(
-                enabled = !checking,
-                onClick = {
-                    checking = true
-                    vm.checkUpdate(BuildConfig.VERSION_NAME) { r ->
-                        checking = false
-                        r.onSuccess { info ->
-                            if (info.isNewer) {
-                                latestInfo = info
-                                showUpdate = true
+                    OutlinedTextField(
+                        value = apiKey, onValueChange = { apiKey = it },
+                        label = { Text("API Key") },
+                        modifier = Modifier.fillMaxWidth(), singleLine = true,
+                        shape = RoundedCornerShape(12.dp)
+                    )
+                    OutlinedTextField(
+                        value = model, onValueChange = { model = it },
+                        label = { Text("模型名") },
+                        modifier = Modifier.fillMaxWidth(), singleLine = true,
+                        shape = RoundedCornerShape(12.dp)
+                    )
+                    Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                        Button(
+                            onClick = {
+                                vm.saveApiSettings(
+                                    com.ifthen.app.data.ApiSettings(baseUrl.trim(), apiKey.trim(), model.trim())
+                                )
+                                onToast("已保存")
+                            },
+                            modifier = Modifier.weight(1f)
+                        ) { Text("保存") }
+                        OutlinedButton(
+                            enabled = !testing,
+                            onClick = {
+                                testing = true
+                                vm.testApi(
+                                    com.ifthen.app.data.ApiSettings(baseUrl.trim(), apiKey.trim(), model.trim())
+                                ) { r ->
+                                    testing = false
+                                    r.onSuccess { onToast("连接成功，可见 $it 个模型") }
+                                        .onFailure { onToast("连接失败：${it.message}") }
+                                }
+                            },
+                            modifier = Modifier.weight(1f)
+                        ) {
+                            if (testing) {
+                                CircularProgressIndicator(modifier = Modifier.size(16.dp), strokeWidth = 2.dp)
+                                Text("  测试中…")
                             } else {
-                                onToast("已是最新版本 v${BuildConfig.VERSION_NAME}")
+                                Text("测试连接")
                             }
-                        }.onFailure { onToast("检查更新失败：${it.message}") }
+                        }
                     }
-                },
-                modifier = Modifier.fillMaxWidth()
-            ) {
-                if (checking) {
-                    CircularProgressIndicator(modifier = Modifier.size(18.dp), strokeWidth = 2.dp)
-                    Text("  检查中…")
-                } else {
-                    Text("检查更新")
                 }
             }
-            Text(
-                "从 GitHub Releases 获取最新版本",
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant
-            )
-            Spacer(Modifier.height(60.dp))
+
+            // ── 数据备份 ──
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                SectionHeader("数据备份", Icons.Filled.Backup)
+                Surface(
+                    shape = RoundedCornerShape(20.dp),
+                    color = MaterialTheme.colorScheme.surfaceVariant,
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Column(Modifier.padding(horizontal = 12.dp, vertical = 4.dp)) {
+                        SettingsRow(
+                            icon = Icons.Filled.CloudUpload,
+                            title = "导出备份",
+                            subtitle = "导出为 JSON，不含 API Key",
+                            onClick = { exportLauncher.launch("ifthen-backup.json") }
+                        )
+                        ThinDivider()
+                        SettingsRow(
+                            icon = Icons.Filled.CloudDownload,
+                            title = "从备份恢复",
+                            subtitle = "会用备份覆盖当前全部数据",
+                            onClick = {
+                                importLauncher.launch(arrayOf("application/json", "text/plain", "*/*"))
+                            }
+                        )
+                    }
+                }
+            }
+
+            // ── 关于 ──
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                SectionHeader("关于", Icons.Filled.Info)
+                Surface(
+                    shape = RoundedCornerShape(20.dp),
+                    color = MaterialTheme.colorScheme.surfaceVariant,
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Column(Modifier.padding(horizontal = 12.dp, vertical = 8.dp)) {
+                        Row(
+                            Modifier.fillMaxWidth().padding(horizontal = 4.dp, vertical = 8.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Image(
+                                painter = painterResource(R.drawable.ic_launcher_clock),
+                                contentDescription = null,
+                                modifier = Modifier.size(46.dp).clip(RoundedCornerShape(12.dp))
+                            )
+                            Spacer(Modifier.width(14.dp))
+                            Column(Modifier.weight(1f)) {
+                                Text("布谷", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
+                                Text(
+                                    "版本 v${BuildConfig.VERSION_NAME}",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
+                        }
+                        ThinDivider()
+                        SettingsRow(
+                            icon = Icons.Filled.SystemUpdate,
+                            title = "检查更新",
+                            subtitle = "从 GitHub 获取最新版本",
+                            trailing = {
+                                if (checking) {
+                                    CircularProgressIndicator(modifier = Modifier.size(18.dp), strokeWidth = 2.dp)
+                                } else {
+                                    Icon(
+                                        Icons.AutoMirrored.Filled.KeyboardArrowRight,
+                                        contentDescription = null,
+                                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                                        modifier = Modifier.size(20.dp)
+                                    )
+                                }
+                            },
+                            onClick = {
+                                if (!checking) {
+                                    checking = true
+                                    vm.checkUpdate(BuildConfig.VERSION_NAME) { r ->
+                                        checking = false
+                                        r.onSuccess { info ->
+                                            if (info.isNewer) {
+                                                latestInfo = info
+                                                showUpdate = true
+                                            } else {
+                                                onToast("已是最新版本 v${BuildConfig.VERSION_NAME}")
+                                            }
+                                        }.onFailure { onToast("检查更新失败：${it.message}") }
+                                    }
+                                }
+                            }
+                        )
+                    }
+                }
+            }
+
+            Spacer(Modifier.height(48.dp))
         }
     }
 
@@ -265,6 +331,86 @@ fun SettingsScreen(
             }
         )
     }
+}
+
+@Composable
+private fun SectionHeader(title: String, icon: ImageVector) {
+    Row(
+        modifier = Modifier.padding(start = 4.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Icon(icon, contentDescription = null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(18.dp))
+        Spacer(Modifier.width(8.dp))
+        Text(title, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
+    }
+}
+
+@Composable
+private fun SectionCard(content: @Composable ColumnScope.() -> Unit) {
+    Surface(
+        shape = RoundedCornerShape(20.dp),
+        color = MaterialTheme.colorScheme.surfaceVariant,
+        modifier = Modifier.fillMaxWidth()
+    ) {
+        Column(
+            Modifier.padding(16.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp),
+            content = content
+        )
+    }
+}
+
+@Composable
+private fun SettingsRow(
+    icon: ImageVector,
+    title: String,
+    subtitle: String? = null,
+    trailing: (@Composable () -> Unit)? = null,
+    onClick: () -> Unit
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(12.dp))
+            .clickable(onClick = onClick)
+            .padding(horizontal = 4.dp, vertical = 12.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Icon(icon, contentDescription = null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(22.dp))
+        Spacer(Modifier.width(14.dp))
+        Column(Modifier.weight(1f)) {
+            Text(title, style = MaterialTheme.typography.bodyLarge, fontWeight = FontWeight.Medium)
+            if (subtitle != null) {
+                Text(
+                    subtitle,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+        }
+        Spacer(Modifier.width(8.dp))
+        if (trailing != null) {
+            trailing()
+        } else {
+            Icon(
+                Icons.AutoMirrored.Filled.KeyboardArrowRight,
+                contentDescription = null,
+                tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.size(20.dp)
+            )
+        }
+    }
+}
+
+@Composable
+private fun ThinDivider() {
+    Box(
+        Modifier
+            .fillMaxWidth()
+            .padding(start = 40.dp)
+            .height(1.dp)
+            .background(MaterialTheme.colorScheme.outline.copy(alpha = 0.15f))
+    )
 }
 
 /** 把 Release 说明里的轻量 Markdown 变纯文本：去标题井号、列表短横改圆点、去粗体星号和代码标记、压掉多余空行 */
