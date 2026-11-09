@@ -29,6 +29,9 @@ data class Rule(
     val kind: String = RuleKind.REPEATING.name,
     // 一次性预案的可选到期日（本地当天 0 点毫秒）；只用于提醒，到期不自动改状态
     val dueDate: Long? = null,
+    // 定时提醒：reminderMin = 当天第几分钟（0..1439），-1 = 未设置；reminderDays = 星期位掩码（bit0=周一 .. bit6=周日，0 视为每天）
+    val reminderMin: Int = -1,
+    val reminderDays: Int = 0,
     val status: String = RuleStatus.ACTIVE.name,
     val createdAt: Long = System.currentTimeMillis()
 )

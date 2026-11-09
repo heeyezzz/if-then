@@ -18,6 +18,8 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxHeight
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
@@ -101,6 +103,19 @@ private const val PAGE_SETTINGS = 2
 private fun AppRoot() {
     val vm: AppViewModel = viewModel()
     val state by vm.ui.collectAsStateWithLifecycle()
+    val appContext = androidx.compose.ui.platform.LocalContext.current
+    val notifPerm = androidx.activity.compose.rememberLauncherForActivityResult(
+        androidx.activity.result.contract.ActivityResultContracts.RequestPermission()
+    ) {}
+    androidx.compose.runtime.LaunchedEffect(Unit) {
+        if (android.os.Build.VERSION.SDK_INT >= 33 &&
+            appContext.checkSelfPermission("android.permission.POST_NOTIFICATIONS") !=
+            android.content.pm.PackageManager.PERMISSION_GRANTED
+        ) {
+            notifPerm.launch("android.permission.POST_NOTIFICATIONS")
+        }
+        vm.rescheduleAllReminders()
+    }
     val navController = rememberNavController()
     val snackbar = remember { SnackbarHostState() }
     val scope = rememberCoroutineScope()
@@ -112,7 +127,11 @@ private fun AppRoot() {
 
     // 稳定住这两个回调：否则每次重组都是新实例，三个页面全部无法跳过
     val toast: (String) -> Unit = remember(snackbar, scope) { { msg -> scope.launch { snackbar.showSnackbar(msg) } } }
-    val onEdit = remember(navController) { { id: Long -> navController.navigate("rule_edit/$id") } }
+    var editOpen by remember { mutableStateOf(false) }
+    var editPickerOpen by remember { mutableStateOf(false) }
+    var editRuleId by remember { mutableStateOf(-1L) }
+    val editSheetState = androidx.compose.material3.rememberModalBottomSheetState(skipPartiallyExpanded = true)
+    val openEditor: (Long) -> Unit = { id -> editRuleId = id; editOpen = true }
 
     Scaffold(
         snackbarHost = { SnackbarHost(snackbar) },
@@ -137,7 +156,7 @@ private fun AppRoot() {
         floatingActionButton = {
             if (onTabs && pagerState.currentPage == PAGE_TASK) {
                 ExtendedFloatingActionButton(
-                    onClick = { if (taskOneOff) navController.navigate("rule_edit/-1") else showNewSheet = true },
+                    onClick = { if (taskOneOff) openEditor(-1L) else showNewSheet = true },
                     icon = { Icon(Icons.Filled.Add, contentDescription = null) },
                     text = { Text(if (taskOneOff) "一次性" else "新建预案") }
                 )
@@ -175,34 +194,18 @@ private fun AppRoot() {
                                 state = state,
                                 oneOff = taskOneOff,
                                 onSelectOneOff = { taskOneOff = it },
-                                onEdit = { navController.navigate("rule_edit/$it") },
+                                onEdit = openEditor,
                                 onEditChain = { navController.navigate("chain_edit/$it") },
                                 onRecord = toast
                             )
                             PAGE_REVIEW -> ReviewScreen(
                                 vm, state,
-                                onEdit = { navController.navigate("rule_edit/$it") }
+                                onEdit = openEditor
                             )
                             else -> SettingsScreen(vm, onToast = toast)
                         }
                     }
                 }
-            }
-            composable("rule_edit/{ruleId}") { entry ->
-                val ruleId = entry.arguments?.getString("ruleId")?.toLongOrNull() ?: -1L
-                RuleEditScreen(
-                    vm = vm,
-                    ruleId = ruleId,
-                    defaultFolderId = state.currentFolderId,
-                    defaultKind = if (taskOneOff) {
-                        com.ifthen.app.data.RuleKind.ONE_OFF.name
-                    } else {
-                        com.ifthen.app.data.RuleKind.REPEATING.name
-                    },
-                    state = state,
-                    onDone = { navController.popBackStack() },
-                    onToast = toast
-                )
             }
             composable("chain_edit/{headId}") { entry ->
                 ChainEditScreen(
@@ -216,6 +219,44 @@ private fun AppRoot() {
             }
         }
 
+        if (editOpen) {
+            ModalBottomSheet(
+                onDismissRequest = { editOpen = false; editPickerOpen = false },
+                sheetState = editSheetState,
+                containerColor = MaterialTheme.colorScheme.background,
+                shape = RoundedCornerShape(topStart = 22.dp, topEnd = 22.dp),
+                dragHandle = {
+                    if (!editPickerOpen) {
+                        Box(
+                            Modifier.fillMaxWidth().padding(top = 8.dp, bottom = 10.dp),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Box(
+                                Modifier
+                                    .size(width = 42.dp, height = 5.dp)
+                                    .clip(RoundedCornerShape(3.dp))
+                                    .background(MaterialTheme.colorScheme.onSurface.copy(alpha = 0.25f))
+                            )
+                        }
+                    }
+                }
+            ) {
+                Box(Modifier.fillMaxWidth().heightIn(max = 600.dp)) {
+                    RuleEditScreen(
+                        vm = vm,
+                        ruleId = editRuleId,
+                        defaultFolderId = state.currentFolderId,
+                        defaultKind = if (taskOneOff) com.ifthen.app.data.RuleKind.ONE_OFF.name
+                            else com.ifthen.app.data.RuleKind.REPEATING.name,
+                        state = state,
+                        onDone = { editOpen = false; editPickerOpen = false },
+                        onToast = toast,
+                        onPickerVisibilityChange = { editPickerOpen = it }
+                    )
+                }
+            }
+        }
+
         if (showNewSheet) {
             ModalBottomSheet(onDismissRequest = { showNewSheet = false }) {
                 Column(Modifier.padding(bottom = 24.dp)) {
@@ -226,7 +267,7 @@ private fun AppRoot() {
                     )
                     SheetOption("建一条预案", "只写一个「如果…那就…」", Icons.Filled.Add) {
                         showNewSheet = false
-                        navController.navigate("rule_edit/-1")
+                        openEditor(-1L)
                     }
                     SheetOption("建一串预案", "一次写下好几步，按顺序自动接成链条", Icons.Filled.Link) {
                         showNewSheet = false

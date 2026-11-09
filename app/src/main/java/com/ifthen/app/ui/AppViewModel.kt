@@ -10,6 +10,7 @@ import com.ifthen.app.ai.AiCandidate
 import com.ifthen.app.ai.DeepSeekClient
 import com.ifthen.app.ai.ReviewInsight
 import com.ifthen.app.update.UpdateChecker
+import com.ifthen.app.reminder.ReminderScheduler
 import com.ifthen.app.update.UpdateInfo
 import com.ifthen.app.data.ApiSettings
 import com.ifthen.app.data.AppDatabase
@@ -503,6 +504,13 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             val finalRule = if (toSave.id == 0L)
                 toSave.copy(sortOrder = db.ruleDao().maxSortOrder(toSave.folderId) + 1) else toSave
             val id = db.ruleDao().upsert(finalRule)
+            val saved = finalRule.copy(id = if (finalRule.id != 0L) finalRule.id else id)
+            val app = getApplication<android.app.Application>()
+            if (saved.status == RuleStatus.ACTIVE.name && saved.reminderMin >= 0) {
+                ReminderScheduler.scheduleNext(app, saved)
+            } else {
+                ReminderScheduler.cancel(app, saved.id)
+            }
             kotlinx.coroutines.withContext(Dispatchers.Main) {
                 onSaved(if (toSave.id != 0L) toSave.id else id)
             }
@@ -550,11 +558,23 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         if (i >= 0 && i < m.lastIndex) m[i + 1].id else null
     }
 
+    fun rescheduleAllReminders() = viewModelScope.launch(Dispatchers.IO) {
+        runCatching {
+            val app = getApplication<android.app.Application>()
+            db.ruleDao().observeAll().first()
+                .filter { it.status == RuleStatus.ACTIVE.name && it.reminderMin >= 0 }
+                .forEach { ReminderScheduler.scheduleNext(app, it) }
+        }
+    }
+
     fun setArchived(rule: Rule, archived: Boolean) = viewModelScope.launch(Dispatchers.IO) {
         if (archived) spliceOut(rule.id)
         db.ruleDao().update(
             rule.copy(status = if (archived) RuleStatus.ARCHIVED.name else RuleStatus.ACTIVE.name)
         )
+        val app = getApplication<android.app.Application>()
+        if (archived) ReminderScheduler.cancel(app, rule.id)
+        else if (rule.reminderMin >= 0) ReminderScheduler.scheduleNext(app, rule)
     }
 
     /** 删除：成员被抽走时先愈合它所在的链，再删预案 */
@@ -562,6 +582,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         val note = spliceOut(rule.id)
         db.execLogDao().deleteForRules(listOf(rule.id))
         db.ruleDao().delete(rule)
+        ReminderScheduler.cancel(getApplication<android.app.Application>(), rule.id)
         kotlinx.coroutines.withContext(Dispatchers.Main) {
             onResult(note?.let { "已删除 · $it" } ?: "已删除")
         }
@@ -928,14 +949,22 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         currentFolderId.value = id
     }
 
-    fun createFolder(name: String, emoji: String, color: Long) = viewModelScope.launch(Dispatchers.IO) {
-        val parent = currentFolderId.value
-        db.folderDao().upsert(
-            Folder(
-                name = name.trim(), emoji = emoji, color = color, parentId = parent,
-                sortOrder = db.folderDao().maxSortOrder(parent) + 1
+    fun createFolder(
+        name: String,
+        emoji: String,
+        color: Long,
+        parentId: Long? = currentFolderId.value,
+        onCreated: ((Long) -> Unit)? = null
+    ) = viewModelScope.launch {
+        val id = withContext(Dispatchers.IO) {
+            db.folderDao().upsert(
+                Folder(
+                    name = name.trim(), emoji = emoji, color = color, parentId = parentId,
+                    sortOrder = db.folderDao().maxSortOrder(parentId) + 1
+                )
             )
-        )
+        }
+        onCreated?.invoke(id)
     }
 
     fun updateFolder(folder: Folder) = viewModelScope.launch(Dispatchers.IO) {
