@@ -155,35 +155,6 @@ fun ChainEditScreen(
                     modifier = Modifier.fillMaxWidth()
                 )
             }
-            item {
-                Card(
-                    colors = CardDefaults.cardColors(
-                        containerColor = MaterialTheme.colorScheme.surfaceVariant
-                    ),
-                    modifier = Modifier.fillMaxWidth()
-                ) {
-                    Row(
-                        Modifier.clickable { showFolderPicker = true }
-                            .padding(horizontal = 14.dp, vertical = 12.dp),
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Column(Modifier.weight(1f)) {
-                            Text("整串放进", style = MaterialTheme.typography.labelLarge)
-                            Text(
-                                state.folders.firstOrNull { it.id == folderId }
-                                    ?.let { "${it.emoji}${it.name}" } ?: "根目录",
-                                style = MaterialTheme.typography.bodyMedium,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant
-                            )
-                        }
-                        Text(
-                            "更换 ›",
-                            style = MaterialTheme.typography.labelMedium,
-                            color = MaterialTheme.colorScheme.primary
-                        )
-                    }
-                }
-            }
             rows.forEachIndexed { i, row ->
                 if (i > 0) {
                     item(key = "gap${row.uid}") {

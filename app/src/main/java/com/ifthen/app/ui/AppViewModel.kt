@@ -285,8 +285,9 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             }
             crumbs.addAll(rev.reversed())
         }
-        val visibleFolders = childrenOf[folderId].orEmpty()
-        val visibleRules = active.filter { it.folderId == folderId }
+        // 文件夹表复用为「清单」：选中某清单就只显示它的规则；未选显示全部。首页不再输出文件夹列表（清单在抽屉里）
+        val visibleFolders = emptyList<com.ifthen.app.data.Folder>()
+        val visibleRules = if (folderId == null) active else active.filter { it.folderId == folderId }
 
         val summaries = ArrayList<FolderSummary>()
         fun walk(parentId: Long?, depth: Int) {

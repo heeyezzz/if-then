@@ -41,6 +41,8 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
 import androidx.compose.material.icons.automirrored.filled.TrendingUp
 import androidx.compose.material.icons.filled.Archive
+import androidx.compose.material.icons.filled.Check
+import androidx.compose.material.icons.filled.Menu
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.DeleteOutline
 import androidx.compose.material.icons.filled.DriveFileMove
@@ -48,6 +50,7 @@ import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
@@ -116,6 +119,7 @@ val ActionDelete = Color(0xFFC0392B)
 fun TitleBar(
     title: String,
     emoji: String? = null,
+    leading: (@Composable () -> Unit)? = null,
     onBack: (() -> Unit)? = null,
     action: (@Composable () -> Unit)? = null,
     modifier: Modifier = Modifier
@@ -125,6 +129,10 @@ fun TitleBar(
             .heightIn(min = 48.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
+        if (leading != null) {
+            leading()
+            Spacer(Modifier.width(2.dp))
+        }
         if (onBack != null) {
             Text(
                 "‹",
@@ -152,6 +160,17 @@ fun TitleBar(
             )
         }
         action?.invoke()
+    }
+}
+
+@Composable
+fun DrawerMenuButton(onClick: () -> Unit) {
+    IconButton(onClick = onClick) {
+        Icon(
+            Icons.Filled.Menu,
+            contentDescription = "打开菜单",
+            tint = MaterialTheme.colorScheme.onSurface
+        )
     }
 }
 
@@ -360,7 +379,7 @@ fun SwipeRuleCard(
 ) {
     val scope = rememberCoroutineScope()
     val density = LocalDensity.current
-    val actionsWidthPx = with(density) { (ActionColumnWidth * 4 + ActionGap * 3 + 2).dp.toPx() }
+    val actionsWidthPx = with(density) { (ActionColumnWidth * 3 + ActionGap * 2 + 2).dp.toPx() }
     val offsetX = remember { Animatable(0f) }
     var pendingJob by remember { mutableStateOf<kotlinx.coroutines.Job?>(null) }
     var cardWidthPx by remember { mutableStateOf(0f) }
@@ -385,9 +404,9 @@ fun SwipeRuleCard(
     )
     val cardColor by animateColorAsState(
         targetValue = lerp(
-            MaterialTheme.colorScheme.surfaceVariant,
+            Color.White,
             MaterialTheme.colorScheme.background,
-            if (isDone) 0.6f else 0f
+            if (isDone) 0.55f else 0f
         ),
         animationSpec = tween(180),
         label = "doneCardColor"
@@ -461,9 +480,6 @@ fun SwipeRuleCard(
                 RoundAction("没做", ActionMiss, Icons.Filled.Close) {
                     onMiss(); scope.launch { offsetX.animateTo(0f, spring()) }; onReveal(null)
                 }
-                RoundAction(moveLabel, ActionMove, moveIcon) {
-                    scope.launch { offsetX.animateTo(0f, spring()) }; onReveal(null); onMove()
-                }
                 RoundAction("归档", ActionArchive, Icons.Filled.Archive) {
                     onArchive(); scope.launch { offsetX.animateTo(0f, spring()) }; onReveal(null)
                 }
@@ -487,111 +503,123 @@ fun SwipeRuleCard(
             Row(
                 modifier = Modifier
                     .clickable(onClick = onOpen)
-                    .padding(start = 14.dp, end = 6.dp, top = 12.dp, bottom = 12.dp),
-                verticalAlignment = Alignment.CenterVertically
+                    .padding(start = 12.dp, end = 12.dp, top = 12.dp, bottom = 12.dp),
+                verticalAlignment = Alignment.Top
             ) {
                 if (step != null) {
                     ChainStepBadge(step = step, expanded = stepExpanded, onClick = { onStepClick?.invoke() })
                     Spacer(Modifier.width(10.dp))
                 }
+                RuleCheckbox(done = isDone, onClick = { if (!isDone) onDone() })
+                Spacer(Modifier.width(12.dp))
                 Column(
                     Modifier.weight(1f),
-                    verticalArrangement = Arrangement.spacedBy(3.dp)
+                    verticalArrangement = Arrangement.spacedBy(2.dp)
                 ) {
                     val fade = contentAlpha * (1f - revealProgress)
                     Column(
                         // 值为 1 时不挂 alpha：graphicsLayer 是录制成本，120Hz 下瓶颈就在录制
                         if (fade < 0.999f) Modifier.alpha(fade) else Modifier,
-                        verticalArrangement = Arrangement.spacedBy(3.dp)
+                        verticalArrangement = Arrangement.spacedBy(2.dp)
                     ) {
-                        TaggedLine(
-                            tag = "如果",
-                            tone = TagTone.Condition,
-                            text = rule.ifText,
+                        // 条件：灰色小字在上
+                        Text(
+                            "如果 · " + rule.ifText,
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            maxLines = 2,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                        // 动作：主文字在下
+                        Text(
+                            rule.thenText,
                             style = MaterialTheme.typography.bodyLarge,
                             color = MaterialTheme.colorScheme.onSurface,
-                            trailing = overdueDays?.let { days ->
-                                {
-                                    Text(
-                                        "逾期 $days 天",
-                                        style = MaterialTheme.typography.labelSmall,
-                                        color = MaterialTheme.colorScheme.error
-                                    )
-                                }
+                            textDecoration = if (isDone) TextDecoration.LineThrough else TextDecoration.None,
+                            maxLines = 3,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                        // 灰色信息行：连击 · 两分钟版 · 到期 · 今日状态
+                        Row(
+                            Modifier.padding(top = 4.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            if (stat.streak > 0) {
+                                Text(
+                                    "🔥 ${stat.streak}",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
                             }
-                        )
-                        TaggedLine(
-                            tag = "就",
-                            tone = TagTone.Action,
-                            text = rule.thenText,
-                            style = MaterialTheme.typography.bodyMedium,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            textDecoration = if (isDone) TextDecoration.LineThrough
-                            else TextDecoration.None,
-                            trailing = dueLabel?.let { label ->
-                                {
-                                    Text(
-                                        label,
-                                        style = MaterialTheme.typography.labelSmall,
-                                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                                    )
-                                }
-                            } ?: { StreakChip(stat.streak) }
-                        )
-                        if (rule.miniThen.isNotBlank() && onMiniDone != null) {
-                            Row(
-                                Modifier
-                                    .clip(RoundedCornerShape(8.dp))
-                                    .clickable { onMiniDone() }
-                                    .padding(vertical = 4.dp),
-                                verticalAlignment = Alignment.CenterVertically
-                            ) {
-                                Box(
-                                    Modifier.width(TagColumnWidth),
-                                    contentAlignment = Alignment.CenterStart
+                            if (rule.miniThen.isNotBlank() && onMiniDone != null) {
+                                Row(
+                                    Modifier
+                                        .clip(RoundedCornerShape(6.dp))
+                                        .clickable { onMiniDone() }
+                                        .padding(horizontal = 2.dp, vertical = 1.dp),
+                                    verticalAlignment = Alignment.CenterVertically
                                 ) {
                                     Text(
                                         "2min",
                                         style = MaterialTheme.typography.labelSmall,
                                         fontWeight = FontWeight.SemiBold,
-                                        color = MaterialTheme.colorScheme.primary,
-                                        modifier = Modifier
-                                            .border(
-                                                1.dp,
-                                                MaterialTheme.colorScheme.primary.copy(alpha = 0.35f),
-                                                RoundedCornerShape(6.dp)
-                                            )
-                                            .padding(horizontal = 5.dp, vertical = 1.dp)
+                                        color = MaterialTheme.colorScheme.primary
+                                    )
+                                    Spacer(Modifier.width(4.dp))
+                                    Text(
+                                        "最小版",
+                                        style = MaterialTheme.typography.labelSmall,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant
                                     )
                                 }
+                            }
+                            if (overdueDays != null) {
                                 Text(
-                                    rule.miniThen,
-                                    style = MaterialTheme.typography.bodySmall,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                    maxLines = 2,
-                                    overflow = TextOverflow.Ellipsis,
-                                    modifier = Modifier.weight(1f)
-                                )
-                                Text(
-                                    "做这个",
+                                    "逾期 $overdueDays 天",
                                     style = MaterialTheme.typography.labelSmall,
-                                    color = MaterialTheme.colorScheme.primary,
-                                    modifier = Modifier.padding(start = 8.dp)
+                                    color = MaterialTheme.colorScheme.error
                                 )
+                            } else if (dueLabel != null) {
+                                Text(
+                                    dueLabel,
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
+                            if (today != null && today.state != TodayState.NONE) {
+                                TodayStamp(today)
                             }
                         }
                     }
-                    if (today != null && today.state != TodayState.NONE) {
-                        Row(
-                            Modifier
-                                .fillMaxWidth()
-                                .then(if (revealProgress == 0f) Modifier else Modifier.alpha(1f - revealProgress))
-                                .padding(top = 2.dp),
-                            horizontalArrangement = Arrangement.End
-                        ) { TodayStamp(today) }
-                    }
                 }
             }
+        }
+    }
+}
+
+@Composable
+private fun RuleCheckbox(done: Boolean, onClick: () -> Unit) {
+    val shape = RoundedCornerShape(7.dp)
+    Box(
+        Modifier
+            .padding(top = 1.dp)
+            .size(24.dp)
+            .clip(shape)
+            .then(
+                if (done) Modifier.background(MaterialTheme.colorScheme.primary)
+                else Modifier.border(2.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.75f), shape)
+            )
+            .clickable(onClick = onClick),
+        contentAlignment = Alignment.Center
+    ) {
+        if (done) {
+            Icon(
+                Icons.Filled.Check,
+                contentDescription = "已完成",
+                tint = Color.White,
+                modifier = Modifier.size(16.dp)
+            )
         }
     }
 }

@@ -43,7 +43,9 @@ import com.ifthen.app.ui.AppViewModel
 import com.ifthen.app.ui.RuleStat
 import com.ifthen.app.ui.SuccessChime
 import com.ifthen.app.ui.TodayStatus
+import com.ifthen.app.ui.TodayState
 import com.ifthen.app.ui.components.SectionHeader
+import com.ifthen.app.ui.components.DrawerMenuButton
 import com.ifthen.app.ui.components.SortPad
 import com.ifthen.app.ui.components.SwipeRuleCard
 import com.ifthen.app.ui.components.TagTone
@@ -62,6 +64,7 @@ fun OneOffScreen(
     state: AppUiState,
     onEdit: (Long) -> Unit,
     onRecord: (String) -> Unit,
+    onOpenDrawer: (() -> Unit)? = null,
     modifier: Modifier = Modifier
 ) {
     val listState = rememberLazyListState()
@@ -99,6 +102,7 @@ fun OneOffScreen(
                 TitleBar(
                     title = "一次性",
                     emoji = null,
+                    leading = if (onOpenDrawer != null) ({ DrawerMenuButton(onOpenDrawer) }) else null,
                     onBack = null,
                     action = {
                         if (sorting) {
@@ -230,52 +234,26 @@ fun OneOffScreen(
     }
 }
 
-/** 当天已结清的一次性预案：灰显结果（力度与长期完成态一致），点进去可重新挂起 */
+/** 当天已结清的一次性预案：复用同一个白卡完成态（勾选 + 划线 + 灰信息），和长期一致。点进去可重新挂起 */
 @Composable
 private fun ResolvedOneOffRow(rule: Rule, today: TodayStatus?, onClick: () -> Unit) {
-    val done = rule.status == RuleStatus.DONE.name
-    val fg = MaterialTheme.colorScheme.onSurfaceVariant
-    val mark = buildString {
-        append(if (done) "✓ 做了" else "✗ 没做")
-        today?.let { append(" · ").append(if (it.backfill) "补记" else resolvedTimeFmt.format(Date(it.at))) }
+    val status = today ?: when (rule.status) {
+        RuleStatus.DONE.name -> TodayStatus(TodayState.DONE)
+        RuleStatus.MISSED.name -> TodayStatus(TodayState.MISSED)
+        else -> TodayStatus(TodayState.PENDING)
     }
-    Card(
-        onClick = onClick,
-        colors = CardDefaults.cardColors(
-            containerColor = lerp(
-                MaterialTheme.colorScheme.surfaceVariant,
-                MaterialTheme.colorScheme.background,
-                0.6f
-            )
-        ),
-        modifier = Modifier.fillMaxWidth()
-    ) {
-        Column(
-            Modifier.padding(start = 14.dp, end = 14.dp, top = 10.dp, bottom = 10.dp),
-            verticalArrangement = Arrangement.spacedBy(3.dp)
-        ) {
-            TaggedLine(
-                tag = "如果",
-                tone = TagTone.Condition,
-                text = rule.ifText,
-                style = MaterialTheme.typography.bodyMedium,
-                color = fg,
-                trailing = {
-                    Text(
-                        mark,
-                        style = MaterialTheme.typography.labelMedium,
-                        color = if (done) MaterialTheme.colorScheme.primary
-                        else MaterialTheme.colorScheme.tertiary
-                    )
-                }
-            )
-            TaggedLine(
-                tag = "就",
-                tone = TagTone.Action,
-                text = rule.thenText,
-                style = MaterialTheme.typography.bodySmall,
-                color = fg
-            )
-        }
-    }
+    SwipeRuleCard(
+        rule = rule,
+        stat = RuleStat(),
+        revealedId = null,
+        onReveal = {},
+        swipeEnabled = false,
+        today = status,
+        onDone = {},
+        onMiss = {},
+        onMove = {},
+        onArchive = {},
+        onDelete = {},
+        onOpen = onClick
+    )
 }

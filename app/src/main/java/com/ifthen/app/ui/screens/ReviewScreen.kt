@@ -202,28 +202,6 @@ fun ReviewScreen(
                     expanded = openRanked,
                     summary = rankedSummary(state),
                     icon = Icons.Filled.Leaderboard,
-                    action = if (!openRanked) null else {
-                        {
-                            Row(horizontalArrangement = Arrangement.spacedBy(2.dp)) {
-                                TextButton(onClick = { worstFirst = true }) {
-                                    Text(
-                                        "最该改",
-                                        fontWeight = if (worstFirst) FontWeight.SemiBold else FontWeight.Normal,
-                                        color = if (worstFirst) MaterialTheme.colorScheme.primary
-                                        else MaterialTheme.colorScheme.onSurfaceVariant
-                                    )
-                                }
-                                TextButton(onClick = { worstFirst = false }) {
-                                    Text(
-                                        "文件夹",
-                                        fontWeight = if (!worstFirst) FontWeight.SemiBold else FontWeight.Normal,
-                                        color = if (!worstFirst) MaterialTheme.colorScheme.primary
-                                        else MaterialTheme.colorScheme.onSurfaceVariant
-                                    )
-                                }
-                            }
-                        }
-                    },
                     onToggle = { openRanked = !openRanked },
                     onLongPress = { setAllSections(!anySectionOpen) }
                 )
@@ -233,7 +211,7 @@ fun ReviewScreen(
                     val st = state.stats[rule.id] ?: RuleStat()
                     StatRow(
                         title = rule.ifText,
-                        detail = detailText(st, state.reviewWindow) + " · " + folderLabel(state, rule.folderId),
+                        detail = detailText(st, state.reviewWindow),
                         streak = st.streak,
                         today = state.todayStatusByRule[rule.id],
                         onClick = { onEdit(rule.id) }

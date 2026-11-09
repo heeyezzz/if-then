@@ -213,55 +213,61 @@ fun RuleEditScreen(
                 }
             }
 
-            // 归属与连接
-            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                EditSectionHeader("归属与连接", Icons.Filled.Folder)
-                Surface(
-                    shape = RoundedCornerShape(20.dp),
-                    color = MaterialTheme.colorScheme.surfaceVariant,
-                    modifier = Modifier.fillMaxWidth()
-                ) {
-                    Column(Modifier.padding(horizontal = 12.dp, vertical = 6.dp)) {
-                        if (!oneOff) {
-                            PickRow(
-                                icon = Icons.Filled.Folder,
-                                title = "所在文件夹",
-                                value = state.folders.firstOrNull { it.id == folderId }
-                                    ?.let { "${it.emoji}${it.name}" } ?: "根目录",
-                                action = "更换",
-                                onClick = { showFolderPicker = true }
-                            )
-                        }
-                        if (oneOff) {
-                            PickRow(
-                                icon = Icons.Filled.Event,
-                                title = "哪天之前",
-                                value = dueDate?.let { "${editDueFmt.format(java.util.Date(it))} 前" }
-                                    ?: "不限 · 情境出现就做",
-                                action = if (dueDate == null) "设定" else "更换",
-                                onClick = { showDuePicker = true }
-                            )
-                        }
-                        if (ruleId > 0 && loaded && !oneOff) {
-                            PickRow(
-                                icon = Icons.Filled.Link,
-                                title = "下一步接哪个预案",
-                                value = nextId?.let { id -> state.ruleById[id] }
-                                    ?.let { "→ ${it.ifText}" } ?: "没有 · 做完这条就结束",
-                                action = if (nextId == null) "接上" else "更换",
-                                onClick = { showNextPicker = true }
-                            )
+            // 清单 / 到期 / 连接
+            val showConn = true
+            if (showConn) {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    EditSectionHeader(
+                        if (oneOff) "到期" else "清单与连接",
+                        if (oneOff) Icons.Filled.Event else Icons.Filled.Folder
+                    )
+                    Surface(
+                        shape = RoundedCornerShape(20.dp),
+                        color = MaterialTheme.colorScheme.surfaceVariant,
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Column(Modifier.padding(horizontal = 12.dp, vertical = 6.dp)) {
+                            if (!oneOff) {
+                                PickRow(
+                                    icon = Icons.Filled.Folder,
+                                    title = "清单",
+                                    value = state.folders.firstOrNull { it.id == folderId }
+                                        ?.let { "${it.emoji}${it.name}" } ?: "未分类",
+                                    action = "更换",
+                                    onClick = { showFolderPicker = true }
+                                )
+                            }
+                            if (oneOff) {
+                                PickRow(
+                                    icon = Icons.Filled.Event,
+                                    title = "哪天之前",
+                                    value = dueDate?.let { "${editDueFmt.format(java.util.Date(it))} 前" }
+                                        ?: "不限 · 情境出现就做",
+                                    action = if (dueDate == null) "设定" else "更换",
+                                    onClick = { showDuePicker = true }
+                                )
+                            }
+                            if (ruleId > 0 && loaded && !oneOff) {
+                                PickRow(
+                                    icon = Icons.Filled.Link,
+                                    title = "下一步接哪个预案",
+                                    value = nextId?.let { id -> state.ruleById[id] }
+                                        ?.let { "→ ${it.ifText}" } ?: "没有 · 做完这条就结束",
+                                    action = if (nextId == null) "接上" else "更换",
+                                    onClick = { showNextPicker = true }
+                                )
+                            }
                         }
                     }
-                }
-                if (ruleId > 0 && !oneOff) {
-                    state.chain.chainPos[ruleId]?.let { pos ->
-                        Text(
-                            "这条排在链条第 ${pos.step}/${pos.size} 步（首页点卡片上的序号可以从这里断开）",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            modifier = Modifier.padding(start = 4.dp)
-                        )
+                    if (ruleId > 0 && !oneOff) {
+                        state.chain.chainPos[ruleId]?.let { pos ->
+                            Text(
+                                "这条排在链条第 ${pos.step}/${pos.size} 步（首页点卡片上的序号可以从这里断开）",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                modifier = Modifier.padding(start = 4.dp)
+                            )
+                        }
                     }
                 }
             }
@@ -405,7 +411,7 @@ fun RuleEditScreen(
         walk(null, 1)
         AlertDialog(
             onDismissRequest = { showFolderPicker = false },
-            title = { Text("移到哪个文件夹？") },
+            title = { Text("放进哪个清单？") },
             text = {
                 Column {
                     rows.forEach { (depth, f) ->
@@ -417,7 +423,7 @@ fun RuleEditScreen(
                             )
                         ) {
                             Text(
-                                if (f == null) "根目录" else "${f.emoji}${f.name}",
+                                if (f == null) "未分类" else "${f.emoji}${f.name}",
                                 modifier = Modifier.fillMaxWidth(),
                                 textAlign = androidx.compose.ui.text.style.TextAlign.Start
                             )

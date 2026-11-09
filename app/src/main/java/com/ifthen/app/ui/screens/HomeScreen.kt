@@ -47,7 +47,6 @@ import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
-import com.ifthen.app.data.ChainStatus
 import com.ifthen.app.data.Folder
 import com.ifthen.app.data.Rule
 import androidx.compose.foundation.layout.size
@@ -70,6 +69,7 @@ import com.ifthen.app.ui.components.FolderEditorDialog
 import com.ifthen.app.ui.components.FolderRow
 import com.ifthen.app.ui.components.NextStepBar
 import com.ifthen.app.ui.components.SectionHeader
+import com.ifthen.app.ui.components.DrawerMenuButton
 import com.ifthen.app.ui.components.SortPad
 import com.ifthen.app.ui.components.SwipeRuleCard
 import com.ifthen.app.ui.components.TitleBar
@@ -82,6 +82,7 @@ fun HomeScreen(
     onEdit: (Long) -> Unit,
     onEditChain: (Long) -> Unit,
     onRecord: (String) -> Unit,
+    onOpenDrawer: (() -> Unit)? = null,
     modifier: Modifier = Modifier
 ) {
     val scope = rememberCoroutineScope()
@@ -97,7 +98,6 @@ fun HomeScreen(
     var sorting by remember { mutableStateOf(false) }
     val expandedChains by vm.expandedChains.collectAsState()
     var menuFor by remember { mutableStateOf<Long?>(null) }
-    var archivedOpen by remember { mutableStateOf(false) }
     var deletingChain by remember { mutableStateOf<Long?>(null) }
     val celebrate by vm.celebrate.collectAsState()
 
@@ -212,15 +212,13 @@ fun HomeScreen(
                 TitleBar(
                     title = cur?.name ?: "布谷",
                     emoji = cur?.emoji,
-                    onBack = if (inFolder && !sorting) {
-                        { vm.openFolder(cur?.parentId) }
-                    } else null,
+                    leading = if (onOpenDrawer != null) ({ DrawerMenuButton(onOpenDrawer) }) else null,
+                    onBack = null,
                     action = {
                         if (sorting) {
                             TextButton(onClick = { sorting = false }) { Text("完成") }
                         } else {
                             Row(verticalAlignment = Alignment.CenterVertically) {
-                                TextButton(onClick = { creatingFolder = true }) { Text("+ 文件夹") }
                                 IconButton(onClick = {
                                     revealedId = null
                                     sorting = true
@@ -458,60 +456,6 @@ fun HomeScreen(
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                         modifier = Modifier.fillMaxWidth().padding(vertical = 24.dp)
                     )
-                }
-            }
-            val archivedChains = state.chains.filter { it.status == ChainStatus.ARCHIVED.name }
-            if (archivedChains.isNotEmpty() && !sorting) {
-                item {
-                    Row(
-                        Modifier.fillMaxWidth().clip(RoundedCornerShape(12.dp))
-                            .clickable { archivedOpen = !archivedOpen }
-                            .padding(horizontal = 10.dp, vertical = 10.dp),
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Icon(
-                            imageVector = Icons.AutoMirrored.Filled.KeyboardArrowRight,
-                            contentDescription = if (archivedOpen) "收起已归档" else "展开已归档",
-                            tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                            modifier = Modifier.size(20.dp).rotate(if (archivedOpen) 90f else 0f)
-                        )
-                        Spacer(Modifier.width(8.dp))
-                        Text(
-                            "已归档 ${archivedChains.size}",
-                            style = MaterialTheme.typography.labelLarge,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-                    }
-                }
-                if (archivedOpen) {
-                    archivedChains.forEach { ch ->
-                        val memCount = state.archivedRules.count { it.chainId == ch.id }
-                        item(key = "arc" + ch.id) {
-                            Box(Modifier.animateItem()) {
-                                ChainRow(
-                                    title = ch.name,
-                                    colorArgb = ch.color,
-                                    size = memCount,
-                                    doneToday = 0,
-                                    expanded = false,
-                                    archived = true,
-                                    showMenu = menuFor == ch.id,
-                                    sorting = false,
-                                    sortLabel = null,
-                                    canUp = false,
-                                    canDown = false,
-                                    onToggle = {},
-                                    onMenu = { menuFor = if (menuFor == ch.id) null else ch.id },
-                                    onEditChain = {},
-                                    onToggleArchive = { vm.unarchiveChain(ch.id); onRecord("已取消归档") },
-                                    onColor = { c -> vm.setChainColor(ch.id, c) },
-                                    onDelete = { deletingChain = ch.id },
-                                    onMoveStep = {},
-                                    onMoveEdge = {}
-                                )
-                            }
-                        }
-                    }
                 }
             }
             item { Spacer(Modifier.height(72.dp)) }

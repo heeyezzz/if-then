@@ -67,6 +67,7 @@ import com.ifthen.app.ui.screens.OneOffScreen
 import com.ifthen.app.ui.screens.ReviewScreen
 import com.ifthen.app.ui.screens.RuleEditScreen
 import com.ifthen.app.ui.screens.SettingsScreen
+import com.ifthen.app.ui.screens.TaskScreen
 import com.ifthen.app.ui.theme.IfThenTheme
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import kotlinx.coroutines.launch
@@ -86,14 +87,14 @@ private data class NavItem(val label: String, val icon: ImageVector)
 
 /** 4 个板块收进一个 pager：空白处左右滑即可切页，卡片上的横向手势仍归卡片自己 */
 private val navItems = listOf(
-    NavItem("一次性", Icons.Filled.TaskAlt),
-    NavItem("长期", Icons.Filled.Repeat),
+    NavItem("任务", Icons.Filled.TaskAlt),
     NavItem("复盘", Icons.Filled.Insights),
     NavItem("设置", Icons.Filled.Settings)
 )
 
-private const val PAGE_ONE_OFF = 0
-private const val PAGE_LONG_TERM = 1
+private const val PAGE_TASK = 0
+private const val PAGE_REVIEW = 1
+private const val PAGE_SETTINGS = 2
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -105,8 +106,9 @@ private fun AppRoot() {
     val scope = rememberCoroutineScope()
     val backStackEntry by navController.currentBackStackEntryAsState()
     val onTabs = backStackEntry?.destination?.route == "tabs"
-    val pagerState = rememberPagerState(initialPage = PAGE_LONG_TERM) { navItems.size }
+    val pagerState = rememberPagerState(initialPage = PAGE_TASK) { navItems.size }
     var showNewSheet by remember { mutableStateOf(false) }
+    var taskOneOff by remember { mutableStateOf(false) }
 
     // 稳定住这两个回调：否则每次重组都是新实例，三个页面全部无法跳过
     val toast: (String) -> Unit = remember(snackbar, scope) { { msg -> scope.launch { snackbar.showSnackbar(msg) } } }
@@ -133,12 +135,11 @@ private fun AppRoot() {
             }
         },
         floatingActionButton = {
-            if (onTabs && pagerState.currentPage <= PAGE_LONG_TERM) {
-                val oneOff = pagerState.currentPage == PAGE_ONE_OFF
+            if (onTabs && pagerState.currentPage == PAGE_TASK) {
                 ExtendedFloatingActionButton(
-                    onClick = { if (oneOff) navController.navigate("rule_edit/-1") else showNewSheet = true },
+                    onClick = { if (taskOneOff) navController.navigate("rule_edit/-1") else showNewSheet = true },
                     icon = { Icon(Icons.Filled.Add, contentDescription = null) },
-                    text = { Text(if (oneOff) "一次性" else "新建预案") }
+                    text = { Text(if (taskOneOff) "一次性" else "新建预案") }
                 )
             }
         }
@@ -161,25 +162,24 @@ private fun AppRoot() {
             composable("tabs") {
                 HorizontalPager(
                     state = pagerState,
-                    // 启动时就把四个页面全部预组合：否则跳到某一页会让下一页在切页动画中途首次组合，尖峰全砸进动画帧
+                    userScrollEnabled = false, // 只允许点底部标签切页，禁掉左右滑动
+                    // 启动时就把各页面预组合：否则跳到某一页会在切页动画中途首次组合，尖峰全砸进动画帧
                     beyondViewportPageCount = navItems.size - 1,
                     key = { it },
                     modifier = Modifier.fillMaxSize()
                 ) { page ->
                     Box(Modifier.fillMaxSize()) {
                         when (page) {
-                            PAGE_ONE_OFF -> OneOffScreen(
-                                vm, state,
-                                onEdit = { navController.navigate("rule_edit/$it") },
-                                onRecord = toast
-                            )
-                            PAGE_LONG_TERM -> HomeScreen(
-                                vm, state,
+                            PAGE_TASK -> TaskScreen(
+                                vm = vm,
+                                state = state,
+                                oneOff = taskOneOff,
+                                onSelectOneOff = { taskOneOff = it },
                                 onEdit = { navController.navigate("rule_edit/$it") },
                                 onEditChain = { navController.navigate("chain_edit/$it") },
                                 onRecord = toast
                             )
-                            2 -> ReviewScreen(
+                            PAGE_REVIEW -> ReviewScreen(
                                 vm, state,
                                 onEdit = { navController.navigate("rule_edit/$it") }
                             )
@@ -194,7 +194,7 @@ private fun AppRoot() {
                     vm = vm,
                     ruleId = ruleId,
                     defaultFolderId = state.currentFolderId,
-                    defaultKind = if (pagerState.currentPage == PAGE_ONE_OFF) {
+                    defaultKind = if (taskOneOff) {
                         com.ifthen.app.data.RuleKind.ONE_OFF.name
                     } else {
                         com.ifthen.app.data.RuleKind.REPEATING.name
